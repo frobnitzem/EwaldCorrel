@@ -1,0 +1,70 @@
+\documentclass{amsart}
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+
+\title{ Structure Factor Calculations}
+\author{ David M. Rogers}
+
+\begin{document}
+
+  The included code uses the discrete Fourier transform (DFT)
+to calculate approximate structure factors,
+\begin{equation}
+S(\vec m) = \sum_{a=1}^N q_a \exp(-2\pi i \vec m\cdot \vec r_a)
+  \approx \tilde S(\vec n),
+\end{equation}
+on grid points $\vec n_\alpha = [0, 1, \ldots, \lfloor K_\alpha/2 \rfloor, -\lfloor (K_\alpha-1)/2 \rfloor, \ldots, -2, -1]$
+corresponding to reciprocal vectors, $\vec m \equiv L^{-1} \vec n$.
+The box vectors are given by the rows of the lower-diagonal matrix,
+$L$, so that the atom coordinates are $\vec r_a = L^T \vec s_a$,
+for $s_a \in [0,1)^3$.
+
+  The approximation used is from Essmann, Perera, Berkowitz,
+Darden, Lee, and Pedersen, (JCP 103, 1995):
+\begin{align}
+\tilde S(\vec n) &\simeq b_1(\vec n_1) b_2(\vec n_2) b_3(\vec n_3)
+                         \mathcal F[Q](\vec n) \\
+b_\alpha(n)^{-1} &= \sum_{j=1}^{r-1} M_r(j) e^{-2\pi i j n/K_\alpha} \\
+Q(\vec n) &= \sum_{a=1}^N q_a \prod_{\alpha=1}^3
+                M_r(\vec n_\alpha - K_\alpha \vec s_{a,\alpha} \mod K_\alpha)
+.
+\end{align}
+Here, $M_r$ is an $r^\text{th}$ order Cardinal B-spline defined on $[0,r]$,
+and $\mathcal F[Q]$ denotes the 3D forward DFT (in the FFTW r2c convention)
+of the $K_1 \times K_2 \times K_3$ array, $Q$.
+Also, $a \mod b \equiv a - b \lfloor a/b \rfloor$
+is defined so as to always return a number in the range $[0,b)$.
+This implementation differs from the reference above in using the negative
+sign for the frequencies in $S$ and shifting the evaluation points
+of $Q(\vec n)$ so as to eliminate the phase of $b$.  This
+shift makes it evident that $Q$ is a convolution of the B-spline
+smoothing function with the charge density.
+
+  To implement the reciprocal-space part of the Ewald energy, it also
+calculates convolutions,
+\begin{equation}
+E = \frac{1}{2\pi V} \sum_{\vec n} f(\vec m^2) |\tilde S(\vec n)|^2
+\end{equation}
+(for radially symmetric functions, $f$)
+along with their derivatives,
+\begin{align}
+V \Pi_{\alpha\beta} &= -\sum_\gamma \frac{\partial E}{\partial L_{\gamma\alpha}}
+            L_{\gamma\beta} \\
+  &= \delta_{\alpha\beta} E
+        + \frac{1}{\pi V} \sum_{\vec n}
+                            \frac{\partial f(\vec m^2)}{\partial \vec m^2}
+            \vec m_\alpha \vec m_\beta |\tilde S(\vec n)|^2 \\
+\intertext{and}
+\frac{\partial E}{\partial \vec r_a} &= \sum_{\vec k}
+  \frac{\partial Q(\vec k)}{\partial \vec r_a}
+                    \mathcal F^{-1}[ f(\vec m^2) \mathcal F[Q](\vec m) ](\vec k)
+\end{align}
+The volume, $V$, is just the determinant of $L$.
+
+  For the Ewald sum specifically,
+\begin{equation}
+f(z) = \exp(-z \pi^2/\beta^2) / z,
+\end{equation}
+where $\beta$ is the range separation parameter in units of inverse distance.
+
+\end{document}
