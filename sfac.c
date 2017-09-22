@@ -13,7 +13,7 @@
 
 #define SQR(x) ((x)*(x))
 #define MOD(a,b) (((a)%(b) + (b)) % (b))
-
+#define WRAP(a,b) (a > b/2 ? a-b : a)
 
 typedef fftw_plan fft_plan_t;
 typedef double mm_complex[2];
@@ -152,21 +152,22 @@ void dbspl_coef(double *b, double *db,
     }
 }
 
-/*  Calculates the DFT of the B-spline coefficients.
+/*  Calculates the (one over the) DFT of the B-spline coefficients.
     The thing is done by the slow-but-simple matrix multiply technique.
  */
 void bspl_dft(int n, int order, double *dft_c, double *c) {
     int i,j;
+    const int j0 = order/2;
 
     for(i=0; i<n; i++) {
-        double b = -(2.0*M_PI*i)/n;
-        double *o = dft_c + 2*i;
+        double om = -(2.0*M_PI*i)/n;
+        double *f = dft_c + i;
 
-        o[0] = o[1] = 0.0;
+        f[0] = 0.0;
         for(j=1; j<order; j++) {
-            o[0] += cos(b*j)*c[j];
-            o[1] += sin(b*j)*c[j];
+            f[0] += cos(om*(j-j0))*c[j];
         }
+        f[0] = 1.0/f[0];
     }
 }
 
@@ -195,6 +196,10 @@ int sfac_ctor(sfac_t *pbc, double L[6], int32_t K[3], int order) {
     pbc->order = order;
     set_L(pbc, L);
 
+    if(order%2 != 0) {
+        printf("Bad order: %d (must be even)\n", order);
+        return -1;
+    }
     if(K[0] < 1 || K[1] < 1 || K[2] < 1) {
         printf("Bad K: %d %d %d\n", K[0], K[1], K[2]);
         return -1;
@@ -212,23 +217,15 @@ int sfac_ctor(sfac_t *pbc, double L[6], int32_t K[3], int order) {
     mk_bspl_coeffs(pbc->bspc, order);
 
     /* Precompute B magnitudes. */
-    if( (pbc->iB[0] = malloc(sizeof(double)*2*(K[0]+K[1]+K[2]))) == NULL) {
+    if( (pbc->iB[0] = malloc(sizeof(double)*(K[0]+K[1]+K[2]))) == NULL) {
         free(pbc->bspc);
         return -2;
     }
-    pbc->iB[1] = pbc->iB[0] + 2*K[0];
-    pbc->iB[2] = pbc->iB[1] + 2*K[1];
+    pbc->iB[1] = pbc->iB[0] + K[0];
+    pbc->iB[2] = pbc->iB[1] + K[1];
     for(j=0; j<3; j++) {
         // Last row of pbc->bspc are spline values at integer nodes.
         bspl_dft(K[j], order, pbc->iB[j], pbc->bspc+order*(order-1));
-        for(i=0; i<K[j]; i++) {
-            double *u = pbc->iB[j]+2*i;
-            double mag = SQR(u[0])+SQR(u[1]);
-            if(mag < 1e-5)
-                printf("Small spline magnitude: %f\n", mag);
-            u[0] = u[0]/mag;
-            u[1] = -u[1]/mag;
-        }
     }
 
     n = 2*pbc->ldim*pbc->K[1]*pbc->K[0]; // Padded array size.
@@ -261,12 +258,75 @@ void sfac_dtor(sfac_t *pbc) {
 }
 
 /* Precompute a radially symmetric array of convolution factors.
- * R is the cutoff for evaluating 'f'.
  */
-int set_A(sfac_t *pbc, rad_fn f, double R, void *info) {
+int set_A_uni(sfac_t *pbc, rad_fn f, void *info) {
+    const int even = (pbc->K[2]+1)%2; // Is last dimension even?
+    int i = pbc->K[0]*pbc->K[1]*pbc->ldim;
+    if(pbc->A == NULL) {
+        pbc->A = malloc(sizeof(double)*i*7);
+        if(pbc->A == NULL) return 2;
+        pbc->dA = pbc->A + i;
+    }
+
+    // L = [ L00,   0, 0
+    //       L01, L11, 0
+    //       L02, L12, L22
+    //     ]
+    // iL = [ iL00, 0, 0
+    //        iL10, iL11, 0
+    //        iL20, iL21, iL22
+    //      ]
+    // mx = iL00 * i
+    // my = iL10 * i + iL11 * j
+    // mz = iL20 * i + iL21 * j + iL22 * k
+
+    for(i=0; i<pbc->K[0]; i++) {
+        const double mx = WRAP(i, pbc->K[0])*pbc->iL[0][0];
+        const double m20 = SQR(mx);
+        int n0 = i*pbc->K[1];
+        int j;
+
+        for(j=0; j<pbc->K[1]; j++) {
+            const double my = WRAP(i, pbc->K[0])*pbc->iL[1][0]
+                            + WRAP(j, pbc->K[1])*pbc->iL[1][1];
+            const double m21 = m20 + SQR(my);
+            const double mz0 = WRAP(i, pbc->K[0])*pbc->iL[2][0]
+                             + WRAP(j, pbc->K[1])*pbc->iL[2][1];
+            const int n1 = (n0 + j)*pbc->ldim;
+            double *A = pbc->A + n1;
+            double s, *dA = pbc->dA + 6*n1;
+            int k;
+
+            A[0] = 0.5*f(m21, &s, info);
+            dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz0*mz0;
+            dA[3] = s*my*mx; dA[4] = s*mz0*mx; dA[5] = s*mz0*my;
+            A++; dA+=6;
+            for(k=1; k<pbc->ldim-even; k++,A++,dA+=6) {
+                const double mz = mz0 + k*pbc->iL[2][2];
+                const double m2 = m21 + SQR(mz);
+                double s;
+
+                A[0] = f(m2, &s, info); s *= 2.0;
+                dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz*mz;
+                dA[3] = s*my*mx; dA[4] = s*mz*mx; dA[5] = s*mz*my;
+            }
+            if(even) { // Count Nyquist freq. once.
+                const double mz = mz0 + k*pbc->iL[2][2];
+                const double m2 = m21 + SQR(mz);
+                A[0] = 0.5*f(m2, &s, info);
+                dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz*mz;
+                dA[3] = s*my*mx; dA[4] = s*mz*mx; dA[5] = s*mz*my;
+            }
+        }
+    }
+
+    return 0;
+}
+
+int set_A(sfac_t *pbc, rad_fn f, void *info) {
     int i, n[3];
-    const int i0 = (int)(R/pbc->iL[0][0]);
-    const double R2 = R*R;
+    const int i0 = (int)(1.0/pbc->iL[0][0]);
+    const double R2 = 1.0;
 
     i = pbc->K[0]*pbc->K[1]*pbc->ldim;
     if(pbc->A == NULL) {
@@ -325,7 +385,7 @@ int set_A(sfac_t *pbc, rad_fn f, double R, void *info) {
                 } else {
                     n[2] += n[1];
                 }
-                pbc->A[n[2]] += f(m2, &s, info);
+                pbc->A[n[2]] += 0.5*f(m2, &s, info);
 
                 dA = pbc->dA + 6*n[2];
 
@@ -376,9 +436,9 @@ void sfac(sfac_t *pbc, int n, const double *w, const double *x) {
         bspl_coef(mpc[2], k0[2] - u[2], pbc->order, pbc->bspc);
 
         // make sure to index positive values
-        k0[0] = MOD(k0[0], pbc->K[0]);
-        k0[1] = MOD(k0[1], pbc->K[1]);
-        k0[2] = MOD(k0[2], pbc->K[2]);
+        k0[0] = MOD(k0[0] - pbc->order/2, pbc->K[0]);
+        k0[1] = MOD(k0[1] - pbc->order/2, pbc->K[1]);
+        k0[2] = MOD(k0[2] - pbc->order/2, pbc->K[2]);
 
         //printf("Atom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
         //		u[0],u[1],u[2], k0[0],k0[1],k0[2]);
@@ -399,20 +459,18 @@ void sfac(sfac_t *pbc, int n, const double *w, const double *x) {
 
     fftw_execute(pbc->fft_neg); // FQ = F-(Q)
 
-    // Divide FQ by FFT of B-spline smoothing operation.
+    // Divide FQ by the FFT of the B-spline smoothing operation.
     // sets FQ to FQ/F(B)
 #pragma omp parallel for private(i)
     for(i=0; i < pbc->K[0]*pbc->K[1]*pbc->ldim; i++) {
         double *Q = pbc->Q + 2*i;
-        double *iB[3] = {
-            pbc->iB[0] + 2*( i/(pbc->ldim*pbc->K[1])),
-            pbc->iB[1] + 2*((i%(pbc->ldim*pbc->K[1]))/pbc->ldim),
-            pbc->iB[2] + 2*( i% pbc->ldim) };
-        double t[2] = { Q[0], Q[1] };
+        double iB[3] = {
+            pbc->iB[0][ i/(pbc->ldim*pbc->K[1]) ],
+            pbc->iB[1][ (i/pbc->ldim) % pbc->K[1] ],
+            pbc->iB[2][ i% pbc->ldim ] };
+        double t = iB[0]*iB[1]*iB[2];
 
-        cplx_mul(Q, t, iB[0]);
-        cplx_mul(t, Q, iB[1]);
-        cplx_mul(Q, t, iB[2]);
+        Q[0] *= t; Q[1] *= t;
     }
 }
 
@@ -430,7 +488,7 @@ double en(sfac_t *pbc) {
         en += pbc->A[i]*t;
     }
     
-    return en*pbc->iV/(2.0*M_PI);
+    return en*pbc->iV/M_PI;
 }
 
 /* Note: for all these, A[z = 0] and A[z = n/2] (when n is even)
@@ -447,7 +505,9 @@ double en(sfac_t *pbc) {
                 FQ is replaced with A FQ = F+[F-[A] * Q]
  */
 double de1(sfac_t *pbc, double vir[6]) {
-    int i, n = pbc->K[0]*pbc->K[1]*pbc->ldim;
+    int i;
+    const int n = pbc->K[0]*pbc->K[1]*pbc->ldim;
+    const int even = (pbc->K[2]+1)%2;
     mm_complex *FQ = pbc->FQ;
     double en = 0.0;
     double vir00,vir11,vir22,vir10,vir20,vir21;
@@ -459,9 +519,16 @@ double de1(sfac_t *pbc, double vir[6]) {
     for(i=0; i<n; i++) {
         double s = SQR(FQ[i][0]) + SQR(FQ[i][1]);
         double *dA = pbc->dA + i*6;
+        double iB[3] = {
+            pbc->iB[0][ i/(pbc->ldim*pbc->K[1]) ],
+            pbc->iB[1][ (i/pbc->ldim) % pbc->K[1] ],
+            pbc->iB[2][ i% pbc->ldim ] };
+        double t = pbc->A[i]*iB[0]*iB[1]*iB[2];
 
-        FQ[i][0] *= pbc->A[i];
-        FQ[i][1] *= pbc->A[i];
+        if(i % pbc->ldim == 0
+            || even && (i+1)%pbc->ldim == 0) t *= 2.0;
+        FQ[i][0] *= t;
+        FQ[i][1] *= t;
 
         en += s*pbc->A[i];
 
@@ -472,16 +539,16 @@ double de1(sfac_t *pbc, double vir[6]) {
         vir20 += s*dA[4];
         vir21 += s*dA[5];
     } // Now: FQ = A FQ
-    en *= pbc->iV/(2*M_PI);
 
-    vir[0] = (vir00 + en)*pbc->iV;
-    vir[1] = (vir11 + en)*pbc->iV;
-    vir[2] = (vir22 + en)*pbc->iV;
-    vir[3] = vir10*pbc->iV;
-    vir[4] = vir20*pbc->iV;
-    vir[5] = vir21*pbc->iV;
+    double fac = SQR(pbc->iV)/M_PI;
+    vir[0] = (vir00 + en)*fac;
+    vir[1] = (vir11 + en)*fac;
+    vir[2] = (vir22 + en)*fac;
+    vir[3] = vir10*fac;
+    vir[4] = vir20*fac;
+    vir[5] = vir21*fac;
 
-    return en;
+    return en * pbc->iV/M_PI;
 }
 
 /* Calculate the change in en wrt. input positions, x.
@@ -491,16 +558,17 @@ double de1(sfac_t *pbc, double vir[6]) {
       Output:	Energy derivatives, dE/dx.
  */
 void de2(sfac_t *pbc, int n, const double *w, const double *x, double *dx0) {
+    double en = 0.0;
     int a;
 
     fftw_execute(pbc->fft_pos); // Q = V F+[A F-(Q)]
 
-#pragma omp parallel for
+#pragma omp parallel for reduction(+:en)
     for(a=0; a<n; a++) {
         int i, j, k;
         int k0[3];	// Start of relevant k values
         double u[3];
-        double dx[3] = {0., 0., 0.};
+        double dx[3] = {0., 0., 0.}; // sum_l C(l) dQ(l)/ds
         double mpc[3][MAX_SPL_ORDER];
         double dmpc[3][MAX_SPL_ORDER];
 
@@ -513,8 +581,6 @@ void de2(sfac_t *pbc, int n, const double *w, const double *x, double *dx0) {
         k0[0] = (int)ceil(u[0]);
         k0[1] = (int)ceil(u[1]);
         k0[2] = (int)ceil(u[2]);
-        //printf("Atom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
-        //		u[0],u[1],u[2], k0[0],k0[1],k0[2]);
 
         // Fill mesh point precomputation arrays.
         dbspl_coef(mpc[0], dmpc[0], k0[0] - u[0], pbc->order, pbc->bspc);
@@ -522,38 +588,40 @@ void de2(sfac_t *pbc, int n, const double *w, const double *x, double *dx0) {
         dbspl_coef(mpc[2], dmpc[2], k0[2] - u[2], pbc->order, pbc->bspc);
 
         // make sure to index positive values
-        k0[0] = MOD(k0[0], pbc->K[0]);
-        k0[1] = MOD(k0[1], pbc->K[1]);
-        k0[2] = MOD(k0[2], pbc->K[2]);
+        k0[0] = MOD(k0[0] - pbc->order/2, pbc->K[0]);
+        k0[1] = MOD(k0[1] - pbc->order/2, pbc->K[1]);
+        k0[2] = MOD(k0[2] - pbc->order/2, pbc->K[2]);
 
+        //printf("dAtom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
+        //		u[0],u[1],u[2], k0[0],k0[1],k0[2]);
         // Multiply values and get forces from a block of the array.
         for(i=0; i<pbc->order; i++) {
             int ni = ((k0[0]+i) % pbc->K[0]) * pbc->K[1]; // Dimensionality...
             for(j=0; j<pbc->order; j++) {
-                double fj0 = dmpc[0][i]*mpc[1][j];
-                double fj1 = mpc[0][i]*dmpc[1][j];
-                double fj2 = mpc[0][i]*mpc[1][j];
+                double fj0 = dmpc[0][i] *  mpc[1][j];
+                double fj1 =  mpc[0][i] * dmpc[1][j];
+                double fj2 =  mpc[0][i] *  mpc[1][j];
                 int nj = (ni + (k0[1]+j) % pbc->K[1])*pbc->ldim*2; // summing...
                 for(k=0; k<pbc->order; k++) {
-                    double fk;
-                    // dQ/dr_i = dB/ds_j ds_j/dr_i Q = L^{-1}_ij dB/ds_j Q
-                    //         ( s_j = r_i L^{-1}_ij )
                     int nk = nj + (k0[2]+k) % pbc->K[2]; // to final n.
-
-                    fk = mpc[2][k]*pbc->Q[nk];
+                    double fk = mpc[2][k]*pbc->Q[nk];
                     dx[0] += fj0 * fk;
                     dx[1] += fj1 * fk;
                     dx[2] += fj2 * dmpc[2][k]*pbc->Q[nk];
+                    //en += w[a]*fj2*fk;
+                    en += w[a] * mpc[0][i] *  mpc[1][j] * mpc[2][k] * pbc->Q[nk];
                 }
             }
         }
-        dx[0] *= w[a]*pbc->iK*pbc->K[0];
-        dx[1] *= w[a]*pbc->iK*pbc->K[1];
-        dx[2] *= w[a]*pbc->iK*pbc->K[2];
-        // dE(r)/ dr_i = dE(s)/ds_j * ds_j/dr_i (s_j = iL_{ji} r_i)
-        dx0[3*a+0] = pbc->iL[0][0]*dx[0] + pbc->iL[1][0]*dx[1]
-                                         + pbc->iL[2][0]*dx[2];
-        dx0[3*a+1] = pbc->iL[1][1]*dx[1] + pbc->iL[2][1]*dx[2];
-        dx0[3*a+2] = pbc->iL[2][2]*dx[2];
+        dx[0] *= (-w[a]*pbc->iV/M_PI)*pbc->K[0];
+        dx[1] *= (-w[a]*pbc->iV/M_PI)*pbc->K[1];
+        dx[2] *= (-w[a]*pbc->iV/M_PI)*pbc->K[2];
+        // dE(r)/ dr_i = dE(s)/ds_j * ds_j/dr_i (s_j = iL_{ij} r_i)
+        dx0[3*a+0] = pbc->iL[0][0]*dx[0];
+        dx0[3*a+1] = pbc->iL[1][0]*dx[0] + pbc->iL[1][1]*dx[1];
+        dx0[3*a+2] = pbc->iL[2][0]*dx[0] + pbc->iL[2][1]*dx[1]
+                                           + pbc->iL[2][2]*dx[2];
     }
+    en *= 0.5*pbc->iV/M_PI;
+    //printf("E = %f\n", en);
 }

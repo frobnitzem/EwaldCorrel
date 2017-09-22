@@ -57,14 +57,21 @@ V \Pi_{\alpha\beta} &= -\sum_\gamma \frac{\partial E}{\partial L_{\gamma\alpha}}
 \intertext{and}
 \frac{\partial E}{\partial \vec r_a} &= \sum_{\vec k}
   \frac{\partial Q(\vec k)}{\partial \vec r_a}
-                    \mathcal F^{-1}[ f(\vec m^2) \mathcal F[Q](\vec m) ](\vec k)
+                    \mathcal F^{-1}[ f(\vec m^2) |B(\vec m)|^2 \mathcal F[Q](\vec m) ](\vec k)
 \end{align}
 The volume, $V$, is just the determinant of $L$.
 
   For the Ewald sum specifically,
 \begin{equation}
-f(z) = \exp(-z \pi^2/\beta^2) / z,
+f(z) = \exp(-z \pi^2/\eta^2) / z,
 \end{equation}
-where $\beta$ is the range separation parameter in units of inverse distance.
+where $\eta$ is the range separation parameter in units of inverse distance.
+The user should also add the correction energy,
+\begin{equation}
+E_\text{corr} = -\frac{\eta}{\sqrt{\pi}} \sum_a q_a^2
+,
+\end{equation}
+so that the result is independent of $\eta$.  Further corrections
+are needed if $\sum q_a \ne 0$.
 
 \end{document}
