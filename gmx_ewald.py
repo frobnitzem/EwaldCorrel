@@ -49,14 +49,14 @@ def mk_calc(name):
         
         # next, calculate centers of mass
         cm = [x[:ions], x[ions:2*ions], tensordot(y, m, axes=[1,0])]
-        cm.append( [cm[2]]*3 ) # all vectors at same location
+        cm += [cm[2]]*3 # all vectors at same location
         y -= cm[2][:,newaxis,:] 
 
         # finally, calculate vectors
         P  = tensordot(transpose(y, (2,0,1)), q, axes=[2,0])
         w  = [ w1, w1, ones(len(y)), P[0], P[1], P[2] ]
         return w[-D:], cm[-D:]
-    return calc_dof
+    return calc_dof, D
 
 def run(name):
     # Define the molecule.
@@ -85,7 +85,7 @@ def run(name):
         wts, cm = calc(frame.x, L)
 
         for i in range(D):
-            s.sfac(len(cm[i]), wts[i], cm[i])
+            s.sfac(len(cm[i]), wts[i], cm[i].astype(float64))
             Q[i] = s.S()
         k = 0
         for i in range(D):

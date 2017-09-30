@@ -403,7 +403,7 @@ int set_A(sfac_t *pbc, rad_fn f, void *info) {
 }
 
 
-static inline void cplx_mul(double *restrict res, const double *a, const double *b) {
+static inline void cplx_mul(double *res, const double *a, const double *b) {
     res[0] = a[0]*b[0] - a[1]*b[1];
     res[1] = a[0]*b[1] + a[1]*b[0];
 }
