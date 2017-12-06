@@ -13,13 +13,18 @@ def test_lines(M, Q, crds):
     sx = 0.0
     sy = 0.0
     sz = 0.0
+    mx = np.arange(M.shape[0])
+    mx[M.shape[0]/2+1:] -= M.shape[0]
+    my = np.arange(M.shape[1])
+    my[M.shape[1]/2+1:] -= M.shape[1]
+    mz = np.arange(M.shape[2])
     for q,x in zip(Q, crds):
-        sx += q*np.exp(-2j*pi*x[0]*np.arange(M.shape[0]))
-        sy += q*np.exp(-2j*pi*x[1]*np.arange(M.shape[1]))
-        sz += q*np.exp(-2j*pi*x[2]*np.arange(M.shape[2]))
-    print M[0,:,0]
-    print sy
-    #print "Line test:"
+        sx += q*np.exp(-2j*pi*x[0]*mx)
+        sy += q*np.exp(-2j*pi*x[1]*my)
+        sz += q*np.exp(-2j*pi*x[2]*mz)
+    print "Line test:"
+    print M[0,0].real
+    print sz.real
     print np.abs(M[:,0,0] - sx).max(), \
           np.abs(M[0,:,0] - sy).max(), \
           np.abs(M[0,0] - sz).max()
