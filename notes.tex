@@ -1,4 +1,6 @@
 \documentclass{amsart}
+\usepackage[letterpaper,top=1in,bottom=1in,%
+            footskip=0in]{geometry}
 
 \renewcommand{\vec}[1]{\mathbf{#1}}
 
@@ -43,7 +45,7 @@ smoothing function with the charge density.
   To implement the reciprocal-space part of the Ewald energy, it also
 calculates convolutions,
 \begin{equation}
-E = \frac{1}{2\pi V} \sum_{\vec n} f(\vec m^2) |\tilde S(\vec n)|^2
+E = \frac{1}{2 V} \sum_{\vec n} f(\vec m^2) |\tilde S(\vec n)|^2
 \end{equation}
 (for radially symmetric functions, $f$)
 along with their derivatives,
@@ -51,7 +53,7 @@ along with their derivatives,
 V \Pi_{\alpha\beta} &= -\sum_\gamma \frac{\partial E}{\partial L_{\gamma\alpha}}
             L_{\gamma\beta} \\
   &= \delta_{\alpha\beta} E
-        + \frac{1}{\pi V} \sum_{\vec n}
+        + \frac{1}{V} \sum_{\vec n}
                             \frac{\partial f(\vec m^2)}{\partial \vec m^2}
             \vec m_\alpha \vec m_\beta |\tilde S(\vec n)|^2 \\
 \intertext{and}
@@ -61,9 +63,9 @@ V \Pi_{\alpha\beta} &= -\sum_\gamma \frac{\partial E}{\partial L_{\gamma\alpha}}
 \end{align}
 The volume, $V$, is just the determinant of $L$.
 
-  For the Ewald sum specifically,
+  For the Ewald sum specifically (in CGS units),
 \begin{equation}
-f(z) = \exp(-z \pi^2/\eta^2) / z,
+f(z) = \exp(-z \pi^2/\eta^2) / \pi z,
 \end{equation}
 where $\eta$ is the range separation parameter in units of inverse distance.
 The user should also add the correction energy,

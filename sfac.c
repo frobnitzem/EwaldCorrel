@@ -488,7 +488,7 @@ double en(sfac_t *pbc) {
         en += pbc->A[i]*t;
     }
     
-    return en*pbc->iV/M_PI;
+    return en*pbc->iV;
 }
 
 /* Note: for all these, A[z = 0] and A[z = n/2] (when n is even)
@@ -540,7 +540,7 @@ double de1(sfac_t *pbc, double vir[6]) {
         vir21 += s*dA[5];
     } // Now: FQ = A FQ
 
-    double fac = SQR(pbc->iV)/M_PI;
+    double fac = SQR(pbc->iV);
     vir[0] = (vir00 + en)*fac;
     vir[1] = (vir11 + en)*fac;
     vir[2] = (vir22 + en)*fac;
@@ -548,7 +548,7 @@ double de1(sfac_t *pbc, double vir[6]) {
     vir[4] = vir20*fac;
     vir[5] = vir21*fac;
 
-    return en * pbc->iV/M_PI;
+    return en * pbc->iV;
 }
 
 /* Calculate the change in en wrt. input positions, x.
@@ -613,15 +613,15 @@ void de2(sfac_t *pbc, int n, const double *w, const double *x, double *dx0) {
                 }
             }
         }
-        dx[0] *= (-w[a]*pbc->iV/M_PI)*pbc->K[0];
-        dx[1] *= (-w[a]*pbc->iV/M_PI)*pbc->K[1];
-        dx[2] *= (-w[a]*pbc->iV/M_PI)*pbc->K[2];
+        dx[0] *= (-w[a]*pbc->iV)*pbc->K[0];
+        dx[1] *= (-w[a]*pbc->iV)*pbc->K[1];
+        dx[2] *= (-w[a]*pbc->iV)*pbc->K[2];
         // dE(r)/ dr_i = dE(s)/ds_j * ds_j/dr_i (s_j = iL_{ij} r_i)
         dx0[3*a+0] = pbc->iL[0][0]*dx[0];
         dx0[3*a+1] = pbc->iL[1][0]*dx[0] + pbc->iL[1][1]*dx[1];
         dx0[3*a+2] = pbc->iL[2][0]*dx[0] + pbc->iL[2][1]*dx[1]
                                            + pbc->iL[2][2]*dx[2];
     }
-    en *= 0.5*pbc->iV/M_PI;
+    en *= 0.5*pbc->iV;
     //printf("E = %f\n", en);
 }

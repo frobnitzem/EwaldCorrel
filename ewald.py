@@ -122,7 +122,7 @@ def ewald_f(r2, ptr, info):
     if r2 < 1e-10:
         ptr.contents.value = 0.0
         return 0.0
-    f = exp(r2*_fac)/r2
+    f = exp(r2*_fac)/(r2*pi)
     ptr.contents.value = (_fac - 1./r2)*f
     return f
 
