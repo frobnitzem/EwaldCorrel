@@ -36,10 +36,23 @@ static void bspl_dft(int n, int order, std::vector<double> &dft_c, double *c) {
 // fully initializes pbc
 // L is a_x, b_y, c_z, b_x, c_x, c_y
 SFac::SFac(double L[6], int32_t K_[3], int order_)
-        : order(order_), bspc(BSpline(order_)) {
+        : order(order_), cell(L), bspc(BSpline(order_)) {
+    if(order%2 != 0) {
+        printf("Bad order: %d (must be even)\n", order);
+        throw std::runtime_error("invalid order");
+    }
     K[0] = K_[0];
     K[1] = K_[1];
     K[2] = K_[2];
+    if(K[0] < 1 || K[1] < 1 || K[2] < 1) {
+        printf("Bad K: %d %d %d\n", K[0], K[1], K[2]);
+        throw std::runtime_error("invalid K");
+    }
+    ldim = K[2]/2+1; // Add 1 to odd K and 2 to even K
+                               // to store the cplx part of freq=0 [odd]
+                               // or the cplx part of freq=0 and K/2 [even].
+    iK = 1.0/(K[0]*K[1]*K[2]);
+
         /* Precomputed B magnitudes. */
     iB.push_back(std::vector<double>(K[0]));
     iB.push_back(std::vector<double>(K[1]));
@@ -47,21 +60,6 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
     int n,i,j;
 
     set_L(reinterpret_cast<void *>(this), L);
-
-    if(order%2 != 0) {
-        printf("Bad order: %d (must be even)\n", order);
-        throw std::runtime_error("invalid order");
-    }
-    if(K[0] < 1 || K[1] < 1 || K[2] < 1) {
-        printf("Bad K: %d %d %d\n", K[0], K[1], K[2]);
-        throw std::runtime_error("invalid K");
-    }
-    for(j=0;j<3;j++)
-        K[j] = K[j];
-    ldim = K[2]/2+1; // Add 1 to odd K and 2 to even K
-                               // to store the cplx part of freq=0 [odd]
-                               // or the cplx part of freq=0 and K/2 [even].
-    iK = 1.0/(K[0]*K[1]*K[2]);
 
     for(j=0; j<3; j++) {
         // Last row of bspc are spline values at integer nodes.
@@ -82,6 +80,32 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
             FQ, Q, FFTW_PATIENT);
 }
 
+/*  Iterate through these using:
+ *
+ *  std::pair<auto first, auto second> range = srt.equal_range(0);
+ *  for (auto it = range.first; it != range.second; ++it) {
+ *      // cid = it->first
+ *      // u = it->second
+ *  }
+ */
+std::multimap<int, Vec4>
+SFac::sort(int n, const double *w, const double *x) const {
+    typedef std::multimap<int, Vec4> MMap;
+    MMap srt;
+
+    for(int a=0; a<n; a++) {
+        Vec4 u = cell.scale(x+3*a); // wrap x into the scaled unit cell
+        for(int i=0; i<3; i++) { // scale up to integer indexing
+            u[i] *= K[i];
+        }
+        u[3] = w[a]; // associate coordinate weight
+        int cid = (((int)u[0])*K[1] + (int)u[1])*K[2] + (int)u[2];
+        srt.insert(MMap::value_type(cid, u));
+    }
+
+    return srt;
+}
+
 void SFac::operator()(int n, const double *w, const double *x) {
     int i, a;
 
@@ -90,16 +114,14 @@ void SFac::operator()(int n, const double *w, const double *x) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
         int n[3];    // Cumulative index to Q array
-        double u[3];
         double yp, xp;
         double mpc[3][MAX_SPL_ORDER];
 
         // Calculate scaled particle position from s = L^{-T} n
-        u[0] = (x[3*a+0]*iL[0][0] + x[3*a+1]*iL[1][0]
-                + x[3*a+2]*iL[2][0]) * K[0];
-        u[1] = (x[3*a+1]*iL[1][1] + x[3*a+2]*iL[2][1]
-                 ) * K[1];
-        u[2] = x[3*a+2]*iL[2][2] * K[2];
+        Vec4 u = cell.scale(x+3*a);
+        for(int ii=0; ii<3; ii++) {
+            u[ii] *= K[ii];
+        }
         k0[0] = (int)ceil(u[0]);
         k0[1] = (int)ceil(u[1]);
         k0[2] = (int)ceil(u[2]);
@@ -179,20 +201,7 @@ double *get_S(void *sfac) {
 
 void set_L(void *sfac, double L[6]) {
     SFac *pbc = reinterpret_cast<SFac *>(sfac);
-    pbc->L[0][0] = L[0];
-    pbc->L[1][1] = L[1];
-    pbc->L[2][2] = L[2];
-    pbc->L[1][0] = L[3];
-    pbc->L[2][0] = L[4];
-    pbc->L[2][1] = L[5];
-
-    pbc->iV = 1./(L[0]*L[1]*L[2]);
-    pbc->iL[0][0] = 1./L[0];
-    pbc->iL[1][1] = 1./L[1];
-    pbc->iL[2][2] = 1./L[2];
-    pbc->iL[1][0] = -L[3]*L[2]*pbc->iV;
-    pbc->iL[2][0] = (L[3]*L[5] - L[1]*L[4])*pbc->iV;
-    pbc->iL[2][1] = -L[0]*L[5]*pbc->iV;
+    pbc->cell = Cell(L);
 }
 
 /* Precompute a radially symmetric array of convolution factors.
@@ -220,17 +229,17 @@ int set_A_uni(void *sfac, rad_fn f, void *info) {
     // mz = iL20 * i + iL21 * j + iL22 * k
 
     for(i=0; i<pbc->K[0]; i++) {
-        const double mx = WRAP(i, pbc->K[0])*pbc->iL[0][0];
+        const double mx = WRAP(i, pbc->K[0])*pbc->cell.iL[0][0];
         const double m20 = SQR(mx);
         int n0 = i*pbc->K[1];
         int j;
 
         for(j=0; j<pbc->K[1]; j++) {
-            const double my = WRAP(i, pbc->K[0])*pbc->iL[1][0]
-                            + WRAP(j, pbc->K[1])*pbc->iL[1][1];
+            const double my = WRAP(i, pbc->K[0])*pbc->cell.iL[1][0]
+                            + WRAP(j, pbc->K[1])*pbc->cell.iL[1][1];
             const double m21 = m20 + SQR(my);
-            const double mz0 = WRAP(i, pbc->K[0])*pbc->iL[2][0]
-                             + WRAP(j, pbc->K[1])*pbc->iL[2][1];
+            const double mz0 = WRAP(i, pbc->K[0])*pbc->cell.iL[2][0]
+                             + WRAP(j, pbc->K[1])*pbc->cell.iL[2][1];
             const int n1 = (n0 + j)*pbc->ldim;
             double *A = pbc->A + n1;
             double s, *dA = pbc->dA + 6*n1;
@@ -241,7 +250,7 @@ int set_A_uni(void *sfac, rad_fn f, void *info) {
             dA[3] = s*my*mx; dA[4] = s*mz0*mx; dA[5] = s*mz0*my;
             A++; dA+=6;
             for(k=1; k<pbc->ldim-even; k++,A++,dA+=6) {
-                const double mz = mz0 + k*pbc->iL[2][2];
+                const double mz = mz0 + k*pbc->cell.iL[2][2];
                 const double m2 = m21 + SQR(mz);
                 double s;
 
@@ -250,7 +259,7 @@ int set_A_uni(void *sfac, rad_fn f, void *info) {
                 dA[3] = s*my*mx; dA[4] = s*mz*mx; dA[5] = s*mz*my;
             }
             if(even) { // Count Nyquist freq. once.
-                const double mz = mz0 + k*pbc->iL[2][2];
+                const double mz = mz0 + k*pbc->cell.iL[2][2];
                 const double m2 = m21 + SQR(mz);
                 A[0] = 0.5*f(m2, &s, info);
                 dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz*mz;
@@ -265,7 +274,7 @@ int set_A_uni(void *sfac, rad_fn f, void *info) {
 int set_A(void *sfac, rad_fn f, void *info) {
     SFac *pbc = reinterpret_cast<SFac *>(sfac);
     int i, n[3];
-    const int i0 = (int)(1.0/pbc->iL[0][0]);
+    const int i0 = (int)(1.0/pbc->cell.iL[0][0]);
     const double R2 = 1.0;
 
     i = pbc->K[0]*pbc->K[1]*pbc->ldim;
@@ -289,29 +298,29 @@ int set_A(void *sfac, rad_fn f, void *info) {
     // mz = iL20 * i + iL21 * j + iL22 * k
 
     for(i=-i0; i<=i0; i++) {
-        const double mx = i*pbc->iL[0][0];
+        const double mx = i*pbc->cell.iL[0][0];
         const double m20 = SQR(mx);
         const double dy = sqrt(R2 - m20);
-        const double my0 = i*pbc->iL[1][0];
+        const double my0 = i*pbc->cell.iL[1][0];
         // |my0 + iL11*j| < dy
-        const int j0 = ceil((-dy - my0)/pbc->iL[1][1]);
-        const int j1 = floor((dy - my0)/pbc->iL[1][1]);
+        const int j0 = ceil((-dy - my0)/pbc->cell.iL[1][1]);
+        const int j1 = floor((dy - my0)/pbc->cell.iL[1][1]);
         int j;
 
         n[0] = MOD(i,pbc->K[0])*pbc->K[1];
         for(j=j0; j<=j1; j++) {
-            const double my = my0 + j*pbc->iL[1][1];
+            const double my = my0 + j*pbc->cell.iL[1][1];
             const double m21 = m20 + SQR(my);
             const double dz = sqrt(R2 - m21);
-            const double mz0 = i*pbc->iL[2][0] + j*pbc->iL[2][1];
+            const double mz0 = i*pbc->cell.iL[2][0] + j*pbc->cell.iL[2][1];
             // |mz0 + iL22*k| < dz
-            const int k0 = ceil((-dz - mz0)/pbc->iL[2][2]);
-            const int k1 = floor((dz - mz0)/pbc->iL[2][2]);
+            const int k0 = ceil((-dz - mz0)/pbc->cell.iL[2][2]);
+            const int k1 = floor((dz - mz0)/pbc->cell.iL[2][2]);
             int k;
 
             n[1] = (MOD(j,pbc->K[1])+n[0])*pbc->ldim;
             for(k=k0; k<=k1; k++) {
-                const double mz = mz0 + k*pbc->iL[2][2];
+                const double mz = mz0 + k*pbc->cell.iL[2][2];
                 const double m2 = m21 + SQR(mz);
                 double *dA, s;
 
@@ -363,7 +372,7 @@ double en(void *sfac) {
         en += pbc->A[i]*t;
     }
     
-    return en*pbc->iV;
+    return en*pbc->cell.iV;
 }
 
 /* Note: for all these, A[z = 0] and A[z = n/2] (when n is even)
@@ -415,7 +424,7 @@ double de1(void *sfac, double vir[6]) {
         vir21 += s*dA[5];
     } // Now: FQ = A FQ
 
-    double fac = SQR(pbc->iV);
+    double fac = SQR(pbc->cell.iV);
     vir[0] = (vir00 + en)*fac;
     vir[1] = (vir11 + en)*fac;
     vir[2] = (vir22 + en)*fac;
@@ -423,7 +432,7 @@ double de1(void *sfac, double vir[6]) {
     vir[4] = vir20*fac;
     vir[5] = vir21*fac;
 
-    return en * pbc->iV;
+    return en * pbc->cell.iV;
 }
 
 /* Calculate the change in en wrt. input positions, x.
@@ -443,17 +452,15 @@ void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
     for(a=0; a<n; a++) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
-        double u[3];
         double dx[3] = {0., 0., 0.}; // sum_l C(l) dQ(l)/ds
         double mpc[3][MAX_SPL_ORDER];
         double dmpc[3][MAX_SPL_ORDER];
 
         // Calculate scaled particle position from s = L^{-T} n
-        u[0] = (x[3*a+0]*pbc->iL[0][0] + x[3*a+1]*pbc->iL[1][0]
-                + x[3*a+2]*pbc->iL[2][0]) * pbc->K[0];
-        u[1] = (x[3*a+1]*pbc->iL[1][1] + x[3*a+2]*pbc->iL[2][1]
-                 ) * pbc->K[1];
-        u[2] = x[3*a+2]*pbc->iL[2][2] * pbc->K[2];
+        Vec4 u = pbc->cell.scale(x+3*a);
+        for(int ii=0; ii<3; ii++) {
+            u[ii] *= pbc->K[ii];
+        }
         k0[0] = (int)ceil(u[0]);
         k0[1] = (int)ceil(u[1]);
         k0[2] = (int)ceil(u[2]);
@@ -491,16 +498,16 @@ void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
                 }
             }
         }
-        dx[0] *= (-w[a]*pbc->iV)*pbc->K[0];
-        dx[1] *= (-w[a]*pbc->iV)*pbc->K[1];
-        dx[2] *= (-w[a]*pbc->iV)*pbc->K[2];
+        dx[0] *= (-w[a]*pbc->cell.iV)*pbc->K[0];
+        dx[1] *= (-w[a]*pbc->cell.iV)*pbc->K[1];
+        dx[2] *= (-w[a]*pbc->cell.iV)*pbc->K[2];
         // dE(r)/ dr_i = dE(s)/ds_j * ds_j/dr_i (s_j = iL_{ij} r_i)
-        dx0[3*a+0] = pbc->iL[0][0]*dx[0];
-        dx0[3*a+1] = pbc->iL[1][0]*dx[0] + pbc->iL[1][1]*dx[1];
-        dx0[3*a+2] = pbc->iL[2][0]*dx[0] + pbc->iL[2][1]*dx[1]
-                                           + pbc->iL[2][2]*dx[2];
+        dx0[3*a+0] = pbc->cell.iL[0][0]*dx[0];
+        dx0[3*a+1] = pbc->cell.iL[1][0]*dx[0] + pbc->cell.iL[1][1]*dx[1];
+        dx0[3*a+2] = pbc->cell.iL[2][0]*dx[0] + pbc->cell.iL[2][1]*dx[1]
+                                           + pbc->cell.iL[2][2]*dx[2];
     }
-    en *= 0.5*pbc->iV;
+    en *= 0.5*pbc->cell.iV;
     //printf("E = %f\n", en);
 }
 }

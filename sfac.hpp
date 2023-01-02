@@ -1,4 +1,5 @@
 #include <vector>
+#include <map>
 
 #include <fftw3.h>
 
@@ -10,6 +11,52 @@
 
 typedef fftw_plan fft_plan_t;
 typedef double mm_complex[2];
+
+struct Vec4 {
+    union {
+        double r[4];
+        struct { double x, y, z, w; };
+    };
+    Vec4(double *x_, double w_)
+        : x(x_[0]), y(x_[1]), z(x_[2]), w(w_) { }
+    Vec4(double x_, double y_, double z_, double w_)
+        : x(x_), y(y_), z(z_), w(w_) { }
+    double operator[](int i) const {
+        return r[i];
+    }
+    double &operator[](int i) {
+        return r[i];
+    }
+};
+
+struct Cell {
+    double L[3][3];  // Box shape
+    double iL[3][3]; // inverse box shape
+    double iV;
+    Cell(double L_[6]) {
+        L[0][0] = L_[0];
+        L[1][1] = L_[1];
+        L[2][2] = L_[2];
+        L[1][0] = L_[3];
+        L[2][0] = L_[4];
+        L[2][1] = L_[5];
+
+        iV = 1./(L_[0]*L_[1]*L_[2]);
+        iL[0][0] = 1./L_[0];
+        iL[1][1] = 1./L_[1];
+        iL[2][2] = 1./L_[2];
+        iL[1][0] = -L_[3]*L_[2]*iV;
+        iL[2][0] = (L_[3]*L_[5] - L_[1]*L_[4])*iV;
+        iL[2][1] = -L_[0]*L_[5]*iV;
+    }
+    Vec4 scale(const double *x) const {
+        return Vec4(
+            x[0]*iL[0][0] + x[1]*iL[1][0] + x[2]*iL[2][0],
+                            x[1]*iL[1][1] + x[2]*iL[2][1],
+                                            x[2]*iL[2][2],
+            0.0);
+    }
+};
 
 struct BSpline {
     const int n;
@@ -111,11 +158,9 @@ struct BSpline {
  */
 struct SFac {
     int order; // B-spline order
+    Cell cell;
     int K[3]; // Size of grid.
     int ldim; // number of cplx numbers along last grid dimension
-    double L[3][3]; // Box shape
-    double iL[3][3]; // inverse box shape
-    double iV;
     double iK; // inverse-K-volume
     BSpline bspc; // B-spline coefficients.
     std::vector<std::vector<double> > iB; // sizes { K[0], K[1], K[2] }
@@ -129,6 +174,7 @@ struct SFac {
 
     SFac(double L[6], int32_t K[3], int order);
     ~SFac();
+    std::multimap<int, Vec4> sort(int n, const double *w, const double *x) const;
     void operator()(int n, const double *w, const double *x);
 };
 // For the last dimension, there are K[2] real numbers,
