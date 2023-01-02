@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import os
 from ewald import Sfac, LofS, SofL, ewald_f, eta
@@ -14,20 +14,20 @@ def test_lines(M, Q, crds):
     sy = 0.0
     sz = 0.0
     mx = np.arange(M.shape[0])
-    mx[M.shape[0]/2+1:] -= M.shape[0]
+    mx[M.shape[0]//2+1:] -= M.shape[0]
     my = np.arange(M.shape[1])
-    my[M.shape[1]/2+1:] -= M.shape[1]
+    my[M.shape[1]//2+1:] -= M.shape[1]
     mz = np.arange(M.shape[2])
     for q,x in zip(Q, crds):
         sx += q*np.exp(-2j*pi*x[0]*mx)
         sy += q*np.exp(-2j*pi*x[1]*my)
         sz += q*np.exp(-2j*pi*x[2]*mz)
-    print "Line test:"
-    print M[0,0].real
-    print sz.real
-    print np.abs(M[:,0,0] - sx).max(), \
+    print("Line test:")
+    print(M[0,0].real)
+    print(sz.real)
+    print(np.abs(M[:,0,0] - sx).max(), \
           np.abs(M[0,:,0] - sy).max(), \
-          np.abs(M[0,0] - sz).max()
+          np.abs(M[0,0] - sz).max())
 
 def test():
     L = np.array([9., 10., 11., 2., -0.1, 1.0])
@@ -50,39 +50,39 @@ def test():
 
     Ecorr = np.sum(q*q)*(-eta/np.sqrt(pi))
 
-    s = Sfac(L, np.array([12,13,14], dtype=np.int), 4)
+    s = Sfac(L, np.array([12,13,14], dtype=int), 4)
     s.set_A(ewald_f)
-    s.sfac(N, q, atoms)
-    test_lines(s.S(), q, crds)
+    s.sfac(q, atoms)
+    test_lines(s.get_S(), q, crds)
 
     def Ex(x):
-        s.sfac(N, q, x)
+        s.sfac(q, x.reshape((N,3)))
         return s.en()
     dx0 = num_diff(Ex, atoms)
 
-    s.sfac(N, q, atoms)
-    print s.en()
-    print s.de1(vir)
+    s.sfac(q, atoms)
+    print(s.en())
+    print(s.de1(vir))
     s.de2(N, q, atoms, dx)
-    print dx
-    print dx0
+    print(dx)
+    print(dx0)
 
-    print vir
+    print(vir)
     def E(L):
         s.set_L(L)
-        #s.sfac(N, q, np.dot(crds, LofS(L)))
+        #s.sfac(q, np.dot(crds, LofS(L)))
         return s.en()
-    s.sfac(N, q, atoms)
+    s.sfac(q, atoms)
     Pi = LofS(num_diff(E, L)).transpose()
     # Pi is properly symmetric, but we're only computing the upper-diagonal.
     Pi = SofL(np.dot(Pi, LofS(L)).transpose())/(-V)
-    print Pi
+    print(Pi)
 
     atoms *= 0.0
     #for zi in np.arange(200)*0.1 - 10.05:
     for zi in []:
         atoms[1,2] = zi
-        s.sfac(N, q, atoms)
+        s.sfac(q, atoms)
         en = s.de1(vir)
         s.de2(N, q, atoms, dx)
 
@@ -92,7 +92,7 @@ def test():
 
         #Ereal = 0.5*( erfc(eta*r1)/r1 + erfc(eta*r2)/r2 + erfc(eta*r3)/r3 )
         en += Ecorr
-        print zi, en, dx[0,2], dx[1,2], dx[1,0], dx[1,1]
+        print(zi, en, dx[0,2], dx[1,2], dx[1,0], dx[1,1])
 
 def num_diff(f, x, h = 1e-7):
     ih = 1./(2.0*h)

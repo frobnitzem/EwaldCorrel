@@ -1,15 +1,18 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import os
-import numpy as np
+from functools import reduce
+from math import pi, exp, erfc
+
 from ctypes import CDLL, c_void_p, c_int, c_double, POINTER, \
                    Structure, PYFUNCTYPE, byref, addressof, cast
+
+import numpy as np
 import numpy.ctypeslib as ct
-from math import pi, exp, erfc
 
 array = np.array
 
-def load_sfac():
+def describe_sfac():
     # Boilerplate declaration code:
     def decl_fn(a, *args):
         a.argtypes = args[:-1]
@@ -42,64 +45,64 @@ def load_sfac():
     def np_intarr_t(*shape):
         return np.ctypeslib.ndpointer(dtype=np.int32, shape=shape, flags='C_CONTIGUOUS')
 
-    class sfac_t(Structure):
-          _fields_ = mkstruct(
-              (c_int, "order"),
-              (c_int*3, "K"),
-              (c_int, "ldim"),
-              (arr_t(3,3), "L", "iL"),
-              (c_double, "iV", "iK"),
-              (dblarr, "bspc"),
-              (dblarr*3, "iB"),
-              (c_void_p, "fft_neg", "fft_pos"),
-              (dblarr, "A", "dA", "Q"))
-    sfac_p = POINTER(sfac_t)
+    sfac_p = c_void_p
     rad_fn = PYFUNCTYPE(c_double, c_double, POINTER(c_double), c_void_p)
     
     # load library
     cwd = os.path.dirname(os.path.abspath(__file__))
     sfac = CDLL(os.path.join(cwd,"libsfac.so"))
 
-    int_fn(sfac.sfac_ctor, sfac_p, nparr_t(6), np_intarr_t(3), c_int)
-    int_fn(sfac.sfac_dtor, sfac_p)
-    int_fn(sfac.set_A, sfac_p, rad_fn, c_void_p)
-    void_fn(sfac.set_L, sfac_p, nparr_t(6))
+    #int_fn(sfac.sfac_ctor, sfac_p, nparr_t(6), np_intarr_t(3), c_int)
+    decl_fn(sfac.sfac_ctor, nparr_t(6), np_intarr_t(3), c_int, sfac_p)
+
+    # functions in sfac's C interface (pass sfac_p as first arg.)
+    void_fn(sfac.sfac_dtor, sfac_p)
     void_fn(sfac.sfac, sfac_p, c_int, nparr, nparr)
+    decl_fn(sfac.get_S, sfac_p, dblarr)
+    void_fn(sfac.set_L, sfac_p, nparr_t(6))
+    int_fn(sfac.set_A, sfac_p, rad_fn, c_void_p)
     dbl_fn(sfac.en, sfac_p)
     dbl_fn(sfac.de1, sfac_p, nparr_t(6))
     void_fn(sfac.de2, sfac_p, c_int, nparr, nparr, nparr)
-    return sfac_t, rad_fn, sfac
+    return sfac_p, rad_fn, sfac
 
 class Sfac:
     def __init__(self, L, K, order=4):
-        sfac_t, rad_fn, sfac = load_sfac()
-        self._sfac = sfac
+        sfac_p, rad_fn, libsfac = describe_sfac()
+        self._libsfac = libsfac
         self.rad_fn = rad_fn
-        self.data = sfac_t()
         self.K = tuple(K.tolist())
+        self.ldim = K[2]//2+1
 
-        self._s = cast(addressof(self.data), POINTER(sfac_t))
-
-        n = self.sfac_ctor(L.astype(np.float64), K.astype(np.int32), order)
-        if n != 0:
-            raise RuntimeError, "Error (%d) initializing Sfac."%n
+        self._data = libsfac.sfac_ctor(L.astype(np.float64),
+                                       K.astype(np.int32), order)
+        if not self._data:
+            raise RuntimeError("Error intializing Sfac.")
 
     def __getattr__(self, name):
-        names = ["sfac_ctor", "sfac_dtor",
-                 "sfac", "en", "de1", "de2"]
+        """ Pass the class pointer as the first argument to the
+            following functions.
+        """
+        names = ["sfac_dtor", "en", "de1", "de2"]
         if name not in names:
-            raise AttributeError
+            raise AttributeError()
             #return None
         try:
-            f = getattr(self._sfac, name)
+            f = getattr(self._libsfac, name)
         except AttributeError:
             return None
-        return lambda *args, **kws: f(self._s, *args, **kws)
+        return lambda *args, **kws: f(self._data, *args, **kws)
 
-    def S(self):
-        shape = (self.K[0], self.K[1], self.data.ldim, 2)
-        s = ct.as_array(self.data.Q, shape=shape)
+    def get_S(self):
+        Q = self._libsfac.get_S(self._data)
+        shape = (self.K[0], self.K[1], self.ldim, 2)
+        s = ct.as_array(Q, shape=shape)
         return s[:,:,:,0] + 1j*s[:,:,:,1]
+
+    def sfac(self, w, x):
+        assert len(w.shape) == 1
+        assert x.shape == (len(w), 3)
+        self._libsfac.sfac(self._data, len(w), w, x)
 
     def __del__(self):
         self.sfac_dtor()
@@ -107,12 +110,12 @@ class Sfac:
     def set_A(self, f):
         self.f = f
 
-        n = self._sfac.set_A(self._s, self.rad_fn(f), cast(0, c_void_p))
+        n = self._libsfac.set_A(self._data, self.rad_fn(f), cast(0, c_void_p))
         if n != 0:
-            raise RuntimeError, "Error (%d) setting A-array."%n
+            raise RuntimeError("Error (%d) setting A-array."%n)
 
     def set_L(self, L):
-        self._sfac.set_L(self._s, L)
+        self._libsfac.set_L(self._data, L)
         if hasattr(self, "f"):
             self.set_A(self.f)
 
