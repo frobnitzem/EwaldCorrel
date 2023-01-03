@@ -113,43 +113,50 @@ void SFac::operator()(int n, const double *w, const double *x) {
     for(a=0; a<n; a++) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
+        int k1[3];    // Start of relevant k values
         int n[3];    // Cumulative index to Q array
         double yp, xp;
-        double mpc[3][MAX_SPL_ORDER];
 
         // Calculate scaled particle position from s = L^{-T} n
         Vec4 u = cell.scale(x+3*a);
         for(int ii=0; ii<3; ii++) {
             u[ii] *= K[ii];
         }
-        k0[0] = (int)ceil(u[0]);
-        k0[1] = (int)ceil(u[1]);
-        k0[2] = (int)ceil(u[2]);
-
-        // Fill mesh point precomputation arrays.
-        for(int jj=0; jj<order; jj++) {
-            mpc[0][jj] = bspc.bspl_coef(k0[0] - u[0], jj);
-            mpc[1][jj] = bspc.bspl_coef(k0[1] - u[1], jj);
-            mpc[2][jj] = bspc.bspl_coef(k0[2] - u[2], jj);
-        }
+        k1[0] = (int)ceil(u[0]);
+        k1[1] = (int)ceil(u[1]);
+        k1[2] = (int)ceil(u[2]);
 
         // make sure to index positive values
-        k0[0] = MOD(k0[0] - order/2, K[0]);
-        k0[1] = MOD(k0[1] - order/2, K[1]);
-        k0[2] = MOD(k0[2] - order/2, K[2]);
+        k0[0] = MOD(k1[0] - order/2, K[0]);
+        k0[1] = MOD(k1[1] - order/2, K[1]);
+        k0[2] = MOD(k1[2] - order/2, K[2]);
+        // i = 0, 1, ..., order-1
+        // u \in [0, K)
+        //
+        // assume: order is even
+        // cell index extends to all nonzero B(u - ind + order/2)
+        // have: k = ceil(u)
+        //       ind = k-order/2+i \in ceil(u)-order/2, ceil(u)+order/2-1
+        // want: ind \in [u-order/2, u+order/2)
+        //       u-order/2 <= ind < u+order/2
+        //       ceil(u-order/2) <= ind < ceil(u-order/2) + order
+        //
+        // have: Q[ind] = B_n(k-u, i)
+        // want: Q[ind] = B(u - ind + order/2) = B(ind - u + order/2)
+        //              = B(ceil(u) + i - u) = B_n(ceil(u)-u, i)
 
         //printf("Atom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
         //        u[0],u[1],u[2], k0[0],k0[1],k0[2]);
         // Multiply values and add block into array.
         for(i=0; i<order; i++) {
             n[0] = ((k0[0]+i) % K[0])*K[1];
-            xp = w[a]*mpc[0][i];
+            xp = w[a] * bspc.bspl_coef(k1[0] - u[0], i);
             for(j=0; j<order; j++) {
                 n[1] = (n[0] + (k0[1]+j) % K[1]) * ldim*2;
-                yp = xp*mpc[1][j];
+                yp = xp * bspc.bspl_coef(k1[1] - u[1], j);
                 for(k=0; k<order; k++) {
                     n[2] = n[1] + (k0[2]+k) % K[2];
-                    Q[n[2]] += yp*mpc[2][k];
+                    Q[n[2]] += yp * bspc.bspl_coef(k1[2] - u[2], k);
                 }
             }
         }
@@ -452,49 +459,48 @@ void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
     for(a=0; a<n; a++) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
+        int k1[3];    // Start of relevant k values
         double dx[3] = {0., 0., 0.}; // sum_l C(l) dQ(l)/ds
-        double mpc[3][MAX_SPL_ORDER];
-        double dmpc[3][MAX_SPL_ORDER];
 
         // Calculate scaled particle position from s = L^{-T} n
         Vec4 u = pbc->cell.scale(x+3*a);
         for(int ii=0; ii<3; ii++) {
             u[ii] *= pbc->K[ii];
         }
-        k0[0] = (int)ceil(u[0]);
-        k0[1] = (int)ceil(u[1]);
-        k0[2] = (int)ceil(u[2]);
-
-        // Fill mesh point precomputation arrays.
-        for(int jj=0; jj<pbc->order;jj++) {
-            pbc->bspc.dbspl_coef(mpc[0]+jj, dmpc[0]+jj, k0[0] - u[0], jj);
-            pbc->bspc.dbspl_coef(mpc[1]+jj, dmpc[1]+jj, k0[1] - u[1], jj);
-            pbc->bspc.dbspl_coef(mpc[2]+jj, dmpc[2]+jj, k0[2] - u[2], jj);
-        }
+        k1[0] = (int)ceil(u[0]);
+        k1[1] = (int)ceil(u[1]);
+        k1[2] = (int)ceil(u[2]);
 
         // make sure to index positive values
-        k0[0] = MOD(k0[0] - pbc->order/2, pbc->K[0]);
-        k0[1] = MOD(k0[1] - pbc->order/2, pbc->K[1]);
-        k0[2] = MOD(k0[2] - pbc->order/2, pbc->K[2]);
+        k0[0] = MOD(k1[0] - pbc->order/2, pbc->K[0]);
+        k0[1] = MOD(k1[1] - pbc->order/2, pbc->K[1]);
+        k0[2] = MOD(k1[2] - pbc->order/2, pbc->K[2]);
 
         //printf("dAtom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
         //        u[0],u[1],u[2], k0[0],k0[1],k0[2]);
         // Multiply values and get forces from a block of the array.
         for(i=0; i<pbc->order; i++) {
             int ni = ((k0[0]+i) % pbc->K[0]) * pbc->K[1]; // Dimensionality...
+            double mpx, dmpx;
+            pbc->bspc.dbspl_coef(&mpx, &dmpx, k1[0] - u[0], i);
+
             for(j=0; j<pbc->order; j++) {
-                double fj0 = dmpc[0][i] *  mpc[1][j];
-                double fj1 =  mpc[0][i] * dmpc[1][j];
-                double fj2 =  mpc[0][i] *  mpc[1][j];
+                double mpy, dmpy;
+                pbc->bspc.dbspl_coef(&mpy, &dmpy, k1[1] - u[1], j);
+                double fj0 = dmpx *  mpy;
+                double fj1 =  mpx * dmpy;
+                double fj2 =  mpx *  mpy;
                 int nj = (ni + (k0[1]+j) % pbc->K[1])*pbc->ldim*2; // summing...
                 for(k=0; k<pbc->order; k++) {
+                    double mpz, dmpz;
+                    pbc->bspc.dbspl_coef(&mpz, &dmpz, k1[2] - u[2], k);
                     int nk = nj + (k0[2]+k) % pbc->K[2]; // to final n.
-                    double fk = mpc[2][k]*pbc->Q[nk];
+                    double fk = mpz*pbc->Q[nk];
                     dx[0] += fj0 * fk;
                     dx[1] += fj1 * fk;
-                    dx[2] += fj2 * dmpc[2][k]*pbc->Q[nk];
+                    dx[2] += fj2 * dmpz*pbc->Q[nk];
                     //en += w[a]*fj2*fk;
-                    en += w[a] * mpc[0][i] *  mpc[1][j] * mpc[2][k] * pbc->Q[nk];
+                    en += w[a] * mpx *  mpy * mpz * pbc->Q[nk];
                 }
             }
         }
