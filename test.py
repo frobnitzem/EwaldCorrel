@@ -17,17 +17,22 @@ def test_lines(M, Q, crds):
     mx[M.shape[0]//2+1:] -= M.shape[0]
     my = np.arange(M.shape[1])
     my[M.shape[1]//2+1:] -= M.shape[1]
-    mz = np.arange(M.shape[2])
+    mz = np.arange(M.shape[2]) # halfcomplex dim.
     for q,x in zip(Q, crds):
         sx += q*np.exp(-2j*pi*x[0]*mx)
         sy += q*np.exp(-2j*pi*x[1]*my)
         sz += q*np.exp(-2j*pi*x[2]*mz)
     print("Line test:")
-    print(M[0,0].real)
-    print(sz.real)
-    print(np.abs(M[:,0,0] - sx).max(), \
-          np.abs(M[0,:,0] - sy).max(), \
-          np.abs(M[0,0] - sz).max())
+    print("spl S[0,0]: ", M[0,0].real)
+    print("ref S[0,0]: ", sz.real)
+    # Skip central (high) frequencies because of known spline error
+    print("Line errors:",
+          np.abs(M[:,0,0] - sx)[:M.shape[0]//4].max(), \
+          #np.abs(M[:,0,0] - sx)[1-M.shape[0]//4:].max(), \
+          np.abs(M[0,:,0] - sy)[:M.shape[1]//4].max(), \
+          #np.abs(M[0,:,0] - sy)[1-M.shape[1]//4:].max(), \
+          np.abs(M[0,0,:] - sz)[:M.shape[2]//2].max()
+          )
 
 def test():
     L = np.array([9., 10., 11., 2., -0.1, 1.0])
@@ -61,13 +66,13 @@ def test():
     dx0 = num_diff(Ex, atoms)
 
     s.sfac(q, atoms)
-    print(s.en())
-    print(s.de1(vir))
+    print("E:", s.en())
+    print("E1: ", s.de1(vir))
     s.de2(N, q, atoms, dx)
-    print(dx)
-    print(dx0)
+    print("spl dx:", dx)
+    print("ref dx:", dx0)
 
-    print(vir)
+    print("spl vir:", vir)
     def E(L):
         s.set_L(L)
         #s.sfac(q, np.dot(crds, LofS(L)))
@@ -76,7 +81,7 @@ def test():
     Pi = LofS(num_diff(E, L)).transpose()
     # Pi is properly symmetric, but we're only computing the upper-diagonal.
     Pi = SofL(np.dot(Pi, LofS(L)).transpose())/(-V)
-    print(Pi)
+    print("ref vir:", Pi)
 
     atoms *= 0.0
     #for zi in np.arange(200)*0.1 - 10.05:

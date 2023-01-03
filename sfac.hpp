@@ -1,5 +1,6 @@
 #include <vector>
 #include <map>
+#include <math.h>
 
 #include <fftw3.h>
 
@@ -49,11 +50,14 @@ struct Cell {
         iL[2][0] = (L_[3]*L_[5] - L_[1]*L_[4])*iV;
         iL[2][1] = -L_[0]*L_[5]*iV;
     }
+    static double wrap(double x) {
+        return x - floor(x);
+    }
     Vec4 scale(const double *x) const {
         return Vec4(
-            x[0]*iL[0][0] + x[1]*iL[1][0] + x[2]*iL[2][0],
-                            x[1]*iL[1][1] + x[2]*iL[2][1],
-                                            x[2]*iL[2][2],
+            Cell::wrap(x[0]*iL[0][0] + x[1]*iL[1][0] + x[2]*iL[2][0]),
+            Cell::wrap(                x[1]*iL[1][1] + x[2]*iL[2][1]),
+            Cell::wrap(                                x[2]*iL[2][2]),
             0.0);
     }
 };
@@ -176,6 +180,8 @@ struct SFac {
     ~SFac();
     std::multimap<int, Vec4> sort(int n, const double *w, const double *x) const;
     void operator()(int n, const double *w, const double *x);
+    void accum_spline(int i1, int j1, int k1,
+                      const std::multimap<int, Vec4> &srt);
 };
 // For the last dimension, there are K[2] real numbers,
 // and K[2] frequencies, stored sequentially from 0.

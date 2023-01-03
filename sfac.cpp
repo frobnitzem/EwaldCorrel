@@ -18,7 +18,8 @@
 /*  Calculates the (one over the) DFT of the B-spline coefficients.
     The thing is done by the slow-but-simple matrix multiply technique.
  */
-static void bspl_dft(int n, int order, std::vector<double> &dft_c, double *c) {
+static void bspl_dft(int n, int order,
+                     std::vector<double> &dft_c, const double *c) {
     int i,j;
     const int j0 = order/2;
 
@@ -49,8 +50,8 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
         throw std::runtime_error("invalid K");
     }
     ldim = K[2]/2+1; // Add 1 to odd K and 2 to even K
-                               // to store the cplx part of freq=0 [odd]
-                               // or the cplx part of freq=0 and K/2 [even].
+                     // to store the cplx part of freq=0 [odd]
+                     // or the cplx part of freq=0 and K/2 [even].
     iK = 1.0/(K[0]*K[1]*K[2]);
 
         /* Precomputed B magnitudes. */
@@ -82,7 +83,7 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
 
 /*  Iterate through these using:
  *
- *  std::pair<auto first, auto second> range = srt.equal_range(0);
+ *  std::pair<auto, auto> range = srt.equal_range(0);
  *  for (auto it = range.first; it != range.second; ++it) {
  *      // cid = it->first
  *      // u = it->second
@@ -95,11 +96,14 @@ SFac::sort(int n, const double *w, const double *x) const {
 
     for(int a=0; a<n; a++) {
         Vec4 u = cell.scale(x+3*a); // wrap x into the scaled unit cell
+        int n[3];
         for(int i=0; i<3; i++) { // scale up to integer indexing
-            u[i] *= K[i];
+            u[i] = u[i]*K[i];
+            n[i] = (int)u[i];
+            u[i] -= n[i];
         }
         u[3] = w[a]; // associate coordinate weight
-        int cid = (((int)u[0])*K[1] + (int)u[1])*K[2] + (int)u[2];
+        int cid = (n[0]*K[1] + n[1])*K[2] + n[2];
         srt.insert(MMap::value_type(cid, u));
     }
 
@@ -107,74 +111,58 @@ SFac::sort(int n, const double *w, const double *x) const {
 }
 
 void SFac::operator()(int n, const double *w, const double *x) {
-    int i, a;
-
     memset(Q, 0.0, sizeof(double)*K[0]*K[1]*ldim*2);
-    for(a=0; a<n; a++) {
-        int i, j, k;
-        int k0[3];    // Start of relevant k values
-        int k1[3];    // Start of relevant k values
-        int n[3];    // Cumulative index to Q array
-        double yp, xp;
+    std::multimap<int, Vec4> srt = sort(n, w, x);
 
-        // Calculate scaled particle position from s = L^{-T} n
-        Vec4 u = cell.scale(x+3*a);
-        for(int ii=0; ii<3; ii++) {
-            u[ii] *= K[ii];
-        }
-        k1[0] = (int)ceil(u[0]);
-        k1[1] = (int)ceil(u[1]);
-        k1[2] = (int)ceil(u[2]);
-
-        // make sure to index positive values
-        k0[0] = MOD(k1[0] - order/2, K[0]);
-        k0[1] = MOD(k1[1] - order/2, K[1]);
-        k0[2] = MOD(k1[2] - order/2, K[2]);
-        // i = 0, 1, ..., order-1
-        // u \in [0, K)
-        //
-        // assume: order is even
-        // cell index extends to all nonzero B(u - ind + order/2)
-        // have: k = ceil(u)
-        //       ind = k-order/2+i \in ceil(u)-order/2, ceil(u)+order/2-1
-        // want: ind \in [u-order/2, u+order/2)
-        //       u-order/2 <= ind < u+order/2
-        //       ceil(u-order/2) <= ind < ceil(u-order/2) + order
-        //
-        // have: Q[ind] = B_n(k-u, i)
-        // want: Q[ind] = B(u - ind + order/2) = B(ind - u + order/2)
-        //              = B(ceil(u) + i - u) = B_n(ceil(u)-u, i)
-
-        //printf("Atom %d: u = %.2f %.2f %.2f, k0 = %d %d %d\n", a+1,
-        //        u[0],u[1],u[2], k0[0],k0[1],k0[2]);
-        // Multiply values and add block into array.
-        for(i=0; i<order; i++) {
-            n[0] = ((k0[0]+i) % K[0])*K[1];
-            xp = w[a] * bspc.bspl_coef(k1[0] - u[0], i);
-            for(j=0; j<order; j++) {
-                n[1] = (n[0] + (k0[1]+j) % K[1]) * ldim*2;
-                yp = xp * bspc.bspl_coef(k1[1] - u[1], j);
-                for(k=0; k<order; k++) {
-                    n[2] = n[1] + (k0[2]+k) % K[2];
-                    Q[n[2]] += yp * bspc.bspl_coef(k1[2] - u[2], k);
-                }
+    for(int i=0; i<K[0]; i++) {
+        for(int j=0; j<K[1]; j++) {
+            for(int k=0; k<K[2]; k++) {
+                accum_spline(i, j, k, srt);
             }
         }
     }
-
     fftw_execute(fft_neg); // FQ = F-(Q)
 
     // Divide FQ by the FFT of the B-spline smoothing operation.
     // sets FQ to FQ/F(B)
 #pragma omp parallel for private(i)
-    for(i=0; i < K[0]*K[1]*ldim; i++) {
-        double *Qi = Q + 2*i;
-        double t = iB[0][ i/(ldim*K[1]) ]
-                 * iB[1][ (i/ldim) % K[1] ]
-                 * iB[2][ i% ldim ];
+    for(int cid=0; cid < K[0]*K[1]*ldim; cid++) {
+        double *Qi = Q + 2*cid;
+        double t = iB[0][ cid / (ldim*K[1]) ]
+                 * iB[1][ (cid/ldim) % K[1] ]
+                 * iB[2][ cid % ldim ];
 
         Qi[0] *= t; Qi[1] *= t;
     }
+}
+
+void SFac::accum_spline(int i1, int j1, int k1,
+                        const std::multimap<int, Vec4> &srt) {
+    int NN = (i1*K[1] + j1)*ldim*2 + k1;
+    int i0 = i1 + K[0] - order/2;
+    int j0 = j1 + K[1] - order/2;
+    int k0 = k1 + K[2] - order/2;
+    double ans = 0.0;
+
+    for(int i=0; i<order; i++) {
+        int xid = ( (i0+i)%K[0] ) * K[1];
+        for(int j=0; j<order; j++) {
+            int yid = ( xid + (j0+j)%K[1] ) * K[2];
+            for(int k=0; k<order; k++) {
+                int cid = yid + (k0+k)%K[2];
+
+                auto range = srt.equal_range(cid);
+                for (auto it = range.first; it != range.second; ++it) {
+                    auto u = it->second; // Vec4
+                    ans += bspc.bspl_coef(u[0], i)
+                         * bspc.bspl_coef(u[1], j)
+                         * bspc.bspl_coef(u[2], k)
+                         * u.w;
+                }
+            }
+        }
+    }
+    Q[NN] += ans;
 }
 
 SFac::~SFac() {
