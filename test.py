@@ -26,13 +26,15 @@ def test_lines(M, Q, crds):
     print("spl S[0,0]: ", M[0,0].real)
     print("ref S[0,0]: ", sz.real)
     # Skip central (high) frequencies because of known spline error
-    print("Line errors:",
-          np.abs(M[:,0,0] - sx)[:M.shape[0]//4].max(), \
-          #np.abs(M[:,0,0] - sx)[1-M.shape[0]//4:].max(), \
-          np.abs(M[0,:,0] - sy)[:M.shape[1]//4].max(), \
-          #np.abs(M[0,:,0] - sy)[1-M.shape[1]//4:].max(), \
-          np.abs(M[0,0,:] - sz)[:M.shape[2]//2].max()
-          )
+    err_x = np.abs(M[:,0,0] - sx)[:M.shape[0]//4].max()
+          # = np.abs(M[:,0,0] - sx)[1-M.shape[0]//4:].max()
+    err_y = np.abs(M[0,:,0] - sy)[:M.shape[1]//4].max()
+          # = np.abs(M[0,:,0] - sy)[1-M.shape[1]//4:].max()
+    err_z = np.abs(M[0,0,:] - sz)[:M.shape[2]//2].max()
+    print("Line errors:", err_x, err_y, err_z)
+    assert err_x < 0.01
+    assert err_y < 0.01
+    assert err_z < 0.1
 
 def test():
     L = np.array([9., 10., 11., 2., -0.1, 1.0])
@@ -56,7 +58,7 @@ def test():
     Ecorr = np.sum(q*q)*(-eta/np.sqrt(pi))
 
     s = Sfac(L, np.array([12,13,14], dtype=int), 4)
-    s.set_A(ewald_f)
+    s.set_A(ewald_f, 1.0)
     s.sfac(q, atoms)
     test_lines(s.get_S(), q, crds)
 
@@ -66,11 +68,15 @@ def test():
     dx0 = num_diff(Ex, atoms)
 
     s.sfac(q, atoms)
-    print("E:", s.en())
-    print("E1: ", s.de1(vir))
+    en0 = s.en()
+    en1 = s.de1(vir)
+    print("E:", en0)
+    print("E1: ", en1)
+    assert np.abs(en1-en0) < 1e-14
     s.de2(N, q, atoms, dx)
     print("spl dx:", dx)
     print("ref dx:", dx0)
+    assert np.abs(dx-dx0).max() < 1e-7
 
     print("spl vir:", vir)
     def E(L):
@@ -82,6 +88,7 @@ def test():
     # Pi is properly symmetric, but we're only computing the upper-diagonal.
     Pi = SofL(np.dot(Pi, LofS(L)).transpose())/(-V)
     print("ref vir:", Pi)
+    assert np.abs(vir-Pi).max() < 1e-8
 
     atoms *= 0.0
     #for zi in np.arange(200)*0.1 - 10.05:

@@ -122,6 +122,7 @@ void SFac::operator()(int n, const double *w, const double *x) {
         }
     }
     fftw_execute(fft_neg); // FQ = F-(Q)
+    state = 0;
 
     // Divide FQ by the FFT of the B-spline smoothing operation.
     // sets FQ to FQ/F(B)
@@ -199,80 +200,21 @@ void set_L(void *sfac, double L[6]) {
     pbc->cell = Cell(L);
 }
 
-/* Precompute a radially symmetric array of convolution factors.
+/* Set value of A[m] for all |m| < max_m
+ * TODO: track only 1 virial index and post-multiply by iL () iL^T
+ *
+ * This could potentially be parallelized by
+ * visiting every m, then
+ * summing over all periodic images of m within max_m.
  */
-int set_A_uni(void *sfac, rad_fn f, void *info) {
+int set_A(void *sfac, rad_fn f, double max_m, void *info) {
     SFac *pbc = reinterpret_cast<SFac *>(sfac);
-    const int even = (pbc->K[2]+1)%2; // Is last dimension even?
+    int n[3];
+    const double R2 = SQR(max_m);
+    const int i0 = (int)(max_m/pbc->cell.iL[0][0]);
+
     int i = pbc->K[0]*pbc->K[1]*pbc->ldim;
-    if(pbc->A == NULL) {
-        pbc->A = (double *)malloc(sizeof(double)*i*7);
-        if(pbc->A == NULL) return 2;
-        pbc->dA = pbc->A + i;
-    }
-
-    // L = [ L00,   0, 0
-    //       L01, L11, 0
-    //       L02, L12, L22
-    //     ]
-    // iL = [ iL00, 0, 0
-    //        iL10, iL11, 0
-    //        iL20, iL21, iL22
-    //      ]
-    // mx = iL00 * i
-    // my = iL10 * i + iL11 * j
-    // mz = iL20 * i + iL21 * j + iL22 * k
-
-    for(i=0; i<pbc->K[0]; i++) {
-        const double mx = WRAP(i, pbc->K[0])*pbc->cell.iL[0][0];
-        const double m20 = SQR(mx);
-        int n0 = i*pbc->K[1];
-        int j;
-
-        for(j=0; j<pbc->K[1]; j++) {
-            const double my = WRAP(i, pbc->K[0])*pbc->cell.iL[1][0]
-                            + WRAP(j, pbc->K[1])*pbc->cell.iL[1][1];
-            const double m21 = m20 + SQR(my);
-            const double mz0 = WRAP(i, pbc->K[0])*pbc->cell.iL[2][0]
-                             + WRAP(j, pbc->K[1])*pbc->cell.iL[2][1];
-            const int n1 = (n0 + j)*pbc->ldim;
-            double *A = pbc->A + n1;
-            double s, *dA = pbc->dA + 6*n1;
-            int k;
-
-            A[0] = 0.5*f(m21, &s, info);
-            dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz0*mz0;
-            dA[3] = s*my*mx; dA[4] = s*mz0*mx; dA[5] = s*mz0*my;
-            A++; dA+=6;
-            for(k=1; k<pbc->ldim-even; k++,A++,dA+=6) {
-                const double mz = mz0 + k*pbc->cell.iL[2][2];
-                const double m2 = m21 + SQR(mz);
-                double s;
-
-                A[0] = f(m2, &s, info); s *= 2.0;
-                dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz*mz;
-                dA[3] = s*my*mx; dA[4] = s*mz*mx; dA[5] = s*mz*my;
-            }
-            if(even) { // Count Nyquist freq. once.
-                const double mz = mz0 + k*pbc->cell.iL[2][2];
-                const double m2 = m21 + SQR(mz);
-                A[0] = 0.5*f(m2, &s, info);
-                dA[0] = s*mx*mx; dA[1] = s*my*my; dA[2] = s*mz*mz;
-                dA[3] = s*my*mx; dA[4] = s*mz*mx; dA[5] = s*mz*my;
-            }
-        }
-    }
-
-    return 0;
-}
-
-int set_A(void *sfac, rad_fn f, void *info) {
-    SFac *pbc = reinterpret_cast<SFac *>(sfac);
-    int i, n[3];
-    const int i0 = (int)(1.0/pbc->cell.iL[0][0]);
-    const double R2 = 1.0;
-
-    i = pbc->K[0]*pbc->K[1]*pbc->ldim;
+    // Factor of 7 accounts for potential and 6 virial components.
     if(pbc->A == NULL) {
         pbc->A = (double *)malloc(sizeof(double)*i*7);
         if(pbc->A == NULL) return 2;
@@ -361,6 +303,15 @@ double en(void *sfac) {
     int i;
     const int n = pbc->K[0]*pbc->K[1]*pbc->ldim;
     double en = 0.0;
+
+    if(pbc->state != 0) {
+        printf("Error: You must call sfac before this routine.\n");
+        return 0.0;
+    }
+    if(pbc->A == NULL) {
+        printf("Error: No convolution kernel has been set.\n");
+        return 0.0;
+    }
     #pragma omp parallel for reduction(+:en)
     for(i=0; i<n; i++) {
         double t = SQR(pbc->FQ[i][0])+SQR(pbc->FQ[i][1]);
@@ -378,8 +329,8 @@ double en(void *sfac) {
  * Carry out a convolution with 'A' and return derivative of
  * sum_k A_k |Q|_k^2 wrt the lattice vectors.
  *    Input:    Reciprocal space multipliers, A and their radial derivatives, dA
- *              It is assumed these have radial symmetry.
- *    Output:    Returns energy
+ *              It is assumed these have mirror symmetry in x,y,z (hence real).
+ *    Output:   Returns energy
  *              FQ is replaced with A FQ = F+[F-[A] * Q]
  */
 double de1(void *sfac, double vir[6]) {
@@ -391,6 +342,15 @@ double de1(void *sfac, double vir[6]) {
     double en = 0.0;
     double vir00,vir11,vir22,vir10,vir20,vir21;
 
+    if(pbc->state != 0) {
+        printf("Error: You must call sfac before this routine.\n");
+        return 0.0;
+    }
+    if(pbc->A == NULL) {
+        printf("Error: No convolution kernel has been set.\n");
+        return 0.0;
+    }
+
     /* Overwrite FQ with A FQ and sum en. */
     vir00 = vir11 = vir22 = 0.0;
     vir10 = vir20 = vir21 = 0.0;
@@ -398,11 +358,10 @@ double de1(void *sfac, double vir[6]) {
     for(i=0; i<n; i++) {
         double s = SQR(FQ[i][0]) + SQR(FQ[i][1]);
         double *dA = pbc->dA + i*6;
-        double iB[3] = {
-            pbc->iB[0][ i/(pbc->ldim*pbc->K[1]) ],
-            pbc->iB[1][ (i/pbc->ldim) % pbc->K[1] ],
-            pbc->iB[2][ i% pbc->ldim ] };
-        double t = pbc->A[i]*iB[0]*iB[1]*iB[2];
+        double t = pbc->A[i]
+                 * pbc->iB[0][ i/(pbc->ldim*pbc->K[1]) ]
+                 * pbc->iB[1][ (i/pbc->ldim) % pbc->K[1] ]
+                 * pbc->iB[2][ i% pbc->ldim ];
 
         if(i % pbc->ldim == 0
             || even && (i+1)%pbc->ldim == 0) t *= 2.0;
@@ -417,7 +376,7 @@ double de1(void *sfac, double vir[6]) {
         vir10 += s*dA[3];
         vir20 += s*dA[4];
         vir21 += s*dA[5];
-    } // Now: FQ = A FQ
+    } // Now: FQ := A FQ
 
     double fac = SQR(pbc->cell.iV);
     vir[0] = (vir00 + en)*fac;
@@ -427,10 +386,18 @@ double de1(void *sfac, double vir[6]) {
     vir[4] = vir20*fac;
     vir[5] = vir21*fac;
 
+    fftw_execute(pbc->fft_pos); // Q = V F+[A F-(Q)]
+    pbc->state = 1;
+
     return en * pbc->cell.iV;
 }
 
 /* Calculate the change in en wrt. input positions, x.
+ * For PME, this routine calculates the negative electric field times w.
+ *
+ * Note that w and x sent to this routine do not need to be the
+ * same ones used to compute FQ.
+ *
  *    Input:    Original reciprocal space multipliers, A and coordinates.
  *              It is assumed de1 has already been called
  *              in order to scale FQ!
@@ -438,12 +405,16 @@ double de1(void *sfac, double vir[6]) {
  */
 void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
     SFac *pbc = reinterpret_cast<SFac *>(sfac);
-    double en = 0.0;
+    //double en = 0.0;
     int a;
 
-    fftw_execute(pbc->fft_pos); // Q = V F+[A F-(Q)]
+    if(pbc->state != 1) {
+        printf("Error: You must call de1 before this routine.\n");
+        return;
+    }
 
-#pragma omp parallel for reduction(+:en)
+// To enable energy re-calculation, uncomment the next line:
+//#pragma omp parallel for reduction(+:en)
     for(a=0; a<n; a++) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
@@ -487,8 +458,10 @@ void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
                     dx[0] += fj0 * fk;
                     dx[1] += fj1 * fk;
                     dx[2] += fj2 * dmpz*pbc->Q[nk];
+                    // To enable energy re-calculation, uncomment
+                    // the next line:
                     //en += w[a]*fj2*fk;
-                    en += w[a] * mpx *  mpy * mpz * pbc->Q[nk];
+                    // (i.e. = w[a] * mpx *  mpy * mpz * pbc->Q[nk] )
                 }
             }
         }
@@ -499,9 +472,72 @@ void de2(void *sfac, int n, const double *w, const double *x, double *dx0) {
         dx0[3*a+0] = pbc->cell.iL[0][0]*dx[0];
         dx0[3*a+1] = pbc->cell.iL[1][0]*dx[0] + pbc->cell.iL[1][1]*dx[1];
         dx0[3*a+2] = pbc->cell.iL[2][0]*dx[0] + pbc->cell.iL[2][1]*dx[1]
-                                           + pbc->cell.iL[2][2]*dx[2];
+                                              + pbc->cell.iL[2][2]*dx[2];
     }
-    en *= 0.5*pbc->cell.iV;
+    // To enable energy re-calculation, uncomment the next line:
+    //en *= 0.5*pbc->cell.iV;
     //printf("E = %f\n", en);
+}
+
+/* Calculate the change in en wrt. input weights, w.
+ * In a PME calculation, the weights are charges, so this
+ * derivative is the potential.
+ *
+ * Note that n and x-crds sent to this routine do not need to be the
+ * same ones used to compute FQ.
+ *
+ *    Input:    Original reciprocal space multipliers,  and coordinates.
+ *              It is assumed de1 has already been called
+ *              in order to scale FQ!
+ *    Output:    Energy derivatives, dE/dw.
+ */
+void potl(void *sfac, int n, const double *x, double *phi) {
+    SFac *pbc = reinterpret_cast<SFac *>(sfac);
+    double en = 0.0;
+    int a;
+
+    if(pbc->state != 1) {
+        printf("Error: You must call de1 before this routine.\n");
+        return;
+    }
+
+    for(a=0; a<n; a++) {
+        int i, j, k;
+        int k0[3];    // Start of relevant k values
+        int k1[3];    // Start of relevant k values
+        double pot_a = 0.0; // summation result
+
+        // Calculate scaled particle position from s = L^{-T} n
+        Vec4 u = pbc->cell.scale(x+3*a);
+        for(int ii=0; ii<3; ii++) {
+            u[ii] *= pbc->K[ii];
+        }
+        k1[0] = (int)ceil(u[0]);
+        k1[1] = (int)ceil(u[1]);
+        k1[2] = (int)ceil(u[2]);
+
+        // make sure to index positive values
+        k0[0] = MOD(k1[0] - pbc->order/2, pbc->K[0]);
+        k0[1] = MOD(k1[1] - pbc->order/2, pbc->K[1]);
+        k0[2] = MOD(k1[2] - pbc->order/2, pbc->K[2]);
+
+        // Multiply values and get potential from a block of the array.
+        for(i=0; i<pbc->order; i++) {
+            int ni = ((k0[0]+i) % pbc->K[0]) * pbc->K[1];
+            double s1 = 0.0; // smaller piece of summation
+            for(j=0; j<pbc->order; j++) {
+                double mpy = pbc->bspc.bspl_coef(k1[1] - u[1], j);
+                int nj = (ni + (k0[1]+j) % pbc->K[1])*pbc->ldim*2;
+                for(k=0; k<pbc->order; k++) {
+                    double mpz = pbc->bspc.bspl_coef(k1[2] - u[2], k);
+                    int nk = nj + (k0[2]+k) % pbc->K[2];
+                    s1 += mpy*mpz*pbc->Q[nk];
+                }
+            }
+            double mpx = pbc->bspc.bspl_coef(k1[0] - u[0], i);
+            pot_a += mpx*s1;
+        }
+        phi[a] = pot_a;
+    }
 }
 }

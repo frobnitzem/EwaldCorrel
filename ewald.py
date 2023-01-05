@@ -60,7 +60,7 @@ def describe_sfac():
     void_fn(sfac.sfac, sfac_p, c_int, nparr, nparr)
     decl_fn(sfac.get_S, sfac_p, dblarr)
     void_fn(sfac.set_L, sfac_p, nparr_t(6))
-    int_fn(sfac.set_A, sfac_p, rad_fn, c_void_p)
+    int_fn(sfac.set_A, sfac_p, rad_fn, c_double, c_void_p)
     dbl_fn(sfac.en, sfac_p)
     dbl_fn(sfac.de1, sfac_p, nparr_t(6))
     void_fn(sfac.de2, sfac_p, c_int, nparr, nparr, nparr)
@@ -107,17 +107,18 @@ class Sfac:
     def __del__(self):
         self.sfac_dtor()
 
-    def set_A(self, f):
+    def set_A(self, f, max_m):
         self.f = f
 
-        n = self._libsfac.set_A(self._data, self.rad_fn(f), cast(0, c_void_p))
+        n = self._libsfac.set_A(self._data, self.rad_fn(f), max_m,
+                                cast(0, c_void_p))
         if n != 0:
             raise RuntimeError("Error (%d) setting A-array."%n)
 
     def set_L(self, L):
         self._libsfac.set_L(self._data, L)
         if hasattr(self, "f"):
-            self.set_A(self.f)
+            self.set_A(self.f, 1.0)
 
 eta = 0.5
 _fac = -(pi/eta)**2

@@ -163,6 +163,9 @@ struct BSpline {
 struct SFac {
     int order; // B-spline order
     Cell cell;
+    int state; // describes contents of Q
+               // 0 = computed spline (use FQ, recip. space)
+               // 1 = computed convolution (use Q, real space) 
     int K[3]; // Size of grid.
     int ldim; // number of cplx numbers along last grid dimension
     double iK; // inverse-K-volume
@@ -200,7 +203,7 @@ extern "C" {
     typedef double (*rad_fn)(double r2, double *dA, void *info);
 
     void set_L(void *sfac, double L[6]);
-    int set_A(void *sfac, rad_fn f, void *info);
+    int set_A(void *sfac, rad_fn f, double max_m, void *info);
     double en(void *sfac);
     double de1(void *sfac, double vir[6]);
     void de2(void *sfac, int n, const double *w, const double *x, double *dx);
