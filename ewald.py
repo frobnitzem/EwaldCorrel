@@ -64,6 +64,7 @@ def describe_sfac():
     dbl_fn(sfac.en, sfac_p)
     dbl_fn(sfac.de1, sfac_p, nparr_t(6))
     void_fn(sfac.de2, sfac_p, c_int, nparr, nparr, nparr)
+    void_fn(sfac.potl, sfac_p, c_int, nparr, nparr)
     return sfac_p, rad_fn, sfac
 
 class Sfac:
@@ -83,7 +84,7 @@ class Sfac:
         """ Pass the class pointer as the first argument to the
             following functions.
         """
-        names = ["sfac_dtor", "en", "de1", "de2"]
+        names = ["sfac_dtor", "en", "de1", "de2", "potl"]
         if name not in names:
             raise AttributeError()
             #return None

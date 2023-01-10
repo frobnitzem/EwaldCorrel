@@ -36,6 +36,31 @@ def test_lines(M, Q, crds):
     assert err_y < 0.01
     assert err_z < 0.1
 
+def test_potl():
+    L = np.array([9., 10., 11., 2., -0.1, 1.0])
+    crds = np.array([[0.1, 0.5, 0.1],
+                     [0.9, 0.4, 0.1],
+                     [0.1, 0.4, 0.9],
+                     [0.9, 0.5, 0.9]])
+    N = len(crds)
+    atoms = np.dot(crds, LofS(L))
+    dx = np.zeros((N,3))
+    q = (np.arange(N) % 2)*0.5+0.5
+
+    s = Sfac(L, np.array([12,13,14], dtype=int), 4)
+    s.set_A(ewald_f, 1.0)
+    s.sfac(q, atoms)
+    en0 = s.en()
+
+    vir = np.zeros(6)
+    en1 = s.de1(vir)
+
+    pot = np.zeros(N)
+
+    s.potl(N, atoms, pot)
+    print(pot)
+    print(en0, en1, 0.5*np.dot(q, pot))
+
 def test():
     L = np.array([9., 10., 11., 2., -0.1, 1.0])
     #L = np.array([9.,9.,9.,0.,0.,0.])
@@ -125,4 +150,4 @@ def num_diff(f, x, h = 1e-7):
 
     return np.reshape(df*ih, s)
 
-test()
+test_potl()

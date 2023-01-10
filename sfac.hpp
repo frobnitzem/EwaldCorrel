@@ -207,4 +207,5 @@ extern "C" {
     double en(void *sfac);
     double de1(void *sfac, double vir[6]);
     void de2(void *sfac, int n, const double *w, const double *x, double *dx);
+    void potl(void *sfac, int n, const double *x, double *phi);
 }

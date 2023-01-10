@@ -201,7 +201,9 @@ void set_L(void *sfac, double L[6]) {
 }
 
 /* Set value of A[m] for all |m| < max_m
- * TODO: track only 1 virial index and post-multiply by iL () iL^T
+ *
+ * Note: We must track all 6 virial indices because
+ *       multiple m-points could contribute at the same lattice n.
  *
  * This could potentially be parallelized by
  * visiting every m, then
@@ -537,7 +539,7 @@ void potl(void *sfac, int n, const double *x, double *phi) {
             double mpx = pbc->bspc.bspl_coef(k1[0] - u[0], i);
             pot_a += mpx*s1;
         }
-        phi[a] = pot_a;
+        phi[a] = pot_a * pbc->cell.iV;
     }
 }
 }
