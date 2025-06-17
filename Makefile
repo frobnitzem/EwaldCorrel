@@ -1,7 +1,7 @@
-FFTW=/usr/local/spack/opt/spack/darwin-bigsur-skylake/apple-clang-13.0.0/fftw-3.3.10-2lf6fmlp7gnxvj67sbmnhbqbwvuqpxyq
+FFTW=/home/99r/collab/paradyse-master/venv
 
 libsfac.so: sfac.cpp
-	g++ -std=c++11 -fPIC -shared -I$(FFTW)/include -Wl,-rpath,$(FFTW)/lib -L$(FFTW)/lib -o $@ $^ -lfftw3
+	g++ -fopenmp -std=c++11 -fPIC -shared -I$(FFTW)/include -Wl,-rpath,$(FFTW)/lib -L$(FFTW)/lib -o $@ $^ -lfftw3
 
 test: test.cpp sfac.cpp
 	g++ -I$(FFTW)/include -Wl,-rpath,$(FFTW)/lib -L$(FFTW)/lib -o $@ $^ -lfftw3

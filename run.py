@@ -2,6 +2,7 @@ import os, sys
 from ewald import Sfac, LofS, SofL, ewald_f, eta
 from math import pi, exp, erfc
 import numpy as np
+from time import time
 
 bfac = {
   'H': -3.7390,
@@ -27,6 +28,7 @@ def run(inp, out):
     names, crd = read_mol(inp)
     wts = np.array([bfac[name] for name in names])
     L = 11.680933*5
+    #58.404665
 
     K = 128
     s = Sfac(np.array([L,L,L,0,0,0]), np.array([K, K, K], dtype=int), 4)
@@ -35,7 +37,11 @@ def run(inp, out):
     S = 0
 
     for frame in [crd]:
-        s.sfac(wts, crd)
+        for i in range(3):
+            t0 = time()
+            s.sfac(wts, crd)
+            t1 = time()
+            print(f"{(t1-t0)*1000} ms")
         Q += np.abs(s.get_S())**2
 
     np.save(out, Q)

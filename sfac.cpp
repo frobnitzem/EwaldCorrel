@@ -114,6 +114,7 @@ void SFac::operator()(int n, const double *w, const double *x) {
     memset(Q, 0.0, sizeof(double)*K[0]*K[1]*ldim*2);
     std::multimap<int, Vec4> srt = sort(n, w, x);
 
+#pragma omp parallel for collapse(3)
     for(int i=0; i<K[0]; i++) {
         for(int j=0; j<K[1]; j++) {
             for(int k=0; k<K[2]; k++) {
@@ -126,7 +127,7 @@ void SFac::operator()(int n, const double *w, const double *x) {
 
     // Divide FQ by the FFT of the B-spline smoothing operation.
     // sets FQ to FQ/F(B)
-#pragma omp parallel for private(i)
+#pragma omp parallel for
     for(int cid=0; cid < K[0]*K[1]*ldim; cid++) {
         double *Qi = Q + 2*cid;
         double t = iB[0][ cid / (ldim*K[1]) ]
