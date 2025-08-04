@@ -83,10 +83,9 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
 }
 
 void SFac::operator()(int n, const double *w, const double *x) {
-    int i, a;
-
     memset(Q, 0.0, sizeof(double)*K[0]*K[1]*ldim*2);
-    for(a=0; a<n; a++) {
+#pragma omp parallel for
+    for(int a=0; a<n; a++) {
         int i, j, k;
         int k0[3];    // Start of relevant k values
         int n[3];    // Cumulative index to Q array
@@ -127,6 +126,7 @@ void SFac::operator()(int n, const double *w, const double *x) {
                 yp = xp*mpc[1][j];
                 for(k=0; k<order; k++) {
                     n[2] = n[1] + (k0[2]+k) % K[2];
+#pragma omp atomic
                     Q[n[2]] += yp*mpc[2][k];
                 }
             }
@@ -137,8 +137,8 @@ void SFac::operator()(int n, const double *w, const double *x) {
 
     // Divide FQ by the FFT of the B-spline smoothing operation.
     // sets FQ to FQ/F(B)
-#pragma omp parallel for private(i)
-    for(i=0; i < K[0]*K[1]*ldim; i++) {
+#pragma omp parallel for
+    for(int i=0; i < K[0]*K[1]*ldim; i++) {
         double *Qi = Q + 2*i;
         double t = iB[0][ i/(ldim*K[1]) ]
                  * iB[1][ (i/ldim) % K[1] ]
