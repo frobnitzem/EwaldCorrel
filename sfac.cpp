@@ -77,9 +77,9 @@ SFac::SFac(double L[6], int32_t K_[3], int order_)
     A = dA = NULL;
 
     fft_neg = fftw_plan_dft_r2c_3d(K[0], K[1], K[2],
-            Q, FQ, FFTW_PATIENT);
+            Q, FQ, FFTW_ESTIMATE);
     fft_pos = fftw_plan_dft_c2r_3d(K[0], K[1], K[2],
-            FQ, Q, FFTW_PATIENT);
+            FQ, Q,  FFTW_ESTIMATE);
 }
 
 void SFac::operator()(int n, const double *w, const double *x) {
