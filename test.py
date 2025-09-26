@@ -25,9 +25,14 @@ def test_lines(M, Q, crds):
     print("Line test:")
     print(M[0,0].real)
     print(sz.real)
-    print(np.abs(M[:,0,0] - sx).max(), \
-          np.abs(M[0,:,0] - sy).max(), \
-          np.abs(M[0,0] - sz).max())
+    NT = M.shape[0]//4
+    err = (np.abs(M[:NT,0,0] - sx[:NT]).max(), \
+          np.abs(M[0,:NT,0] - sy[:NT]).max(), \
+          np.abs(M[0,0,:NT] - sz[:NT]).max())
+    assert err[0] < 0.01
+    assert err[1] < 0.01
+    assert err[2] < 0.01
+    print(err)
 
 def test():
     L = np.array([9., 10., 11., 2., -0.1, 1.0])
@@ -61,11 +66,15 @@ def test():
     dx0 = num_diff(Ex, atoms)
 
     s.sfac(q, atoms)
-    print(s.en())
-    print(s.de1(vir))
+    E = s.en()
+    E2 = s.de1(vir)
+    print(E, E2)
+    assert np.abs(E-E2) < 1e-8
     s.de2(N, q, atoms, dx)
     print(dx)
     print(dx0)
+    print(np.abs(dx-dx0).max())
+    assert np.abs(dx-dx0).max() < 1e-7
 
     print(vir)
     def E(L):
@@ -77,6 +86,8 @@ def test():
     # Pi is properly symmetric, but we're only computing the upper-diagonal.
     Pi = SofL(np.dot(Pi, LofS(L)).transpose())/(-V)
     print(Pi)
+    print(np.abs(Pi - vir).max())
+    assert np.abs(Pi - vir).max() < 1e-8
 
     atoms *= 0.0
     #for zi in np.arange(200)*0.1 - 10.05:
